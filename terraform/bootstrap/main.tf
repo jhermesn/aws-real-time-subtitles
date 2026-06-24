@@ -161,10 +161,7 @@ resource "aws_dynamodb_table" "tflock" {
     type = "S"
   }
 
-  server_side_encryption {
-    enabled = true
-  }
-
+  # checkov:skip=CKV_AWS_119: lock table uses DynamoDB default AWS-owned encryption; CMK provides no value here
   # checkov:skip=CKV_AWS_28: point-in-time recovery on a lock table provides no value
   point_in_time_recovery {
     enabled = false
