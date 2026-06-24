@@ -1,0 +1,102 @@
+name: deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.9"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}"
+
+      - name: Convert ADMIN_IPS to Terraform list
+        env:
+          ADMIN_IPS_RAW: ${{ vars.ADMIN_IPS }}
+        run: |
+          # Convert "1.2.3.4/32,5.6.7.8/32" → JSON array for Terraform
+          TF_ADMIN_IPS=$(echo "$ADMIN_IPS_RAW" | python3 -c "
+          import sys, json
+          raw = sys.stdin.read().strip()
+          ips = [ip.strip() for ip in raw.split(',') if ip.strip()]
+          print(json.dumps(ips))
+          ")
+          echo "TF_VAR_admin_ips=$TF_ADMIN_IPS" >> "$GITHUB_ENV"
+
+      - name: Terraform apply
+        working-directory: terraform
+        env:
+          TF_VAR_prefix: ${{ vars.TF_PREFIX }}
+          TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+          TF_VAR_github_repo: ${{ github.repository }}
+          TF_VAR_signing_secret: ${{ secrets.SIGNING_SECRET }}
+          TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+        run: terraform apply -auto-approve
+
+      - name: Export Terraform outputs for React build
+        working-directory: terraform
+        run: terraform output -json > ../src/config.json
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build React app
+        run: npm run build
+
+      - name: Sync to S3
+        run: |
+          BUCKET=$(cd terraform && terraform output -raw s3_bucket_name)
+          aws s3 sync build/ "s3://${BUCKET}" --delete \
+            --cache-control "public,max-age=31536000,immutable" \
+            --exclude "index.html"
+          aws s3 cp build/index.html "s3://${BUCKET}/index.html" \
+            --cache-control "no-cache,no-store,must-revalidate"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          DIST_ID=$(cd terraform && terraform output -raw cloudfront_distribution_id)
+          INVAL_ID=$(aws cloudfront create-invalidation \
+            --distribution-id "${DIST_ID}" \
+            --paths "/*" \
+            --query 'Invalidation.Id' --output text)
+          aws cloudfront wait invalidation-completed \
+            --distribution-id "${DIST_ID}" \
+            --id "${INVAL_ID}"
+
+      - name: Smoke test
+        run: |
+          APP_URL=$(cd terraform && terraform output -raw app_url)
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${APP_URL}/")
+          [ "${STATUS}" = "200" ] || { echo "/ returned ${STATUS}, expected 200"; exit 1; }
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${APP_URL}/speaker")
+          [ "${STATUS}" = "403" ] || { echo "/speaker without token returned ${STATUS}, expected 403"; exit 1; }

@@ -55,17 +55,17 @@ amplifytools.xcconfig
 **.sample
 #amplify-do-not-edit-end
 
-# CDK
-cdk/bin/**.js
-cdk/bin/**.d.ts
-!cdk/bin/config.js
-# Ignore all .js and .d.ts files in the cdk/lib folder and subfolders
-cdk/lib/**/*.js
-cdk/lib/**/*.d.ts
+# Terraform output injected at build time
+src/config.json
 
-!cdk/jest.config.js
-cdk/node_modules
-
-# CDK asset staging directory
-cdk/.cdk.staging
-cdk/cdk.out
+# Terraform
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/terraform.tfvars
+terraform/bootstrap/.terraform/
+terraform/bootstrap/.terraform.lock.hcl
+terraform/bootstrap/terraform.tfstate
+terraform/bootstrap/terraform.tfstate.backup
+terraform/bootstrap/terraform.tfvars

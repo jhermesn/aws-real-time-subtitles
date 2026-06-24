@@ -1,0 +1,5 @@
+prefix      = "myevent"
+aws_region  = "us-east-1"
+github_repo = "owner/aws-real-time-subtitles"
+admin_ips   = ["1.2.3.4/32"]   # organizer's public IP, safe to commit, not sensitive
+# signing_secret set as GitHub Secret TF_VAR_signing_secret only, never here

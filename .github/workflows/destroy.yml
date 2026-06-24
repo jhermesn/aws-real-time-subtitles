@@ -1,0 +1,66 @@
+name: destroy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.9"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}"
+
+      - name: Empty S3 app bucket before destroy
+        env:
+          TF_PREFIX: ${{ vars.TF_PREFIX }}
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET="${TF_PREFIX}-app-${ACCOUNT_ID}"
+          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            aws s3 rm "s3://${BUCKET}" --recursive
+          fi
+
+      - name: Convert ADMIN_IPS to Terraform list
+        env:
+          ADMIN_IPS_RAW: ${{ vars.ADMIN_IPS }}
+        run: |
+          TF_ADMIN_IPS=$(echo "$ADMIN_IPS_RAW" | python3 -c "
+          import sys, json
+          raw = sys.stdin.read().strip()
+          ips = [ip.strip() for ip in raw.split(',') if ip.strip()]
+          print(json.dumps(ips))
+          ")
+          echo "TF_VAR_admin_ips=$TF_ADMIN_IPS" >> "$GITHUB_ENV"
+
+      - name: Terraform destroy
+        working-directory: terraform
+        env:
+          TF_VAR_prefix: ${{ vars.TF_PREFIX }}
+          TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+          TF_VAR_github_repo: ${{ github.repository }}
+          TF_VAR_signing_secret: ${{ secrets.SIGNING_SECRET }}
+        run: terraform destroy -auto-approve

@@ -1,0 +1,4 @@
+prefix      = "myevent"
+aws_region  = "us-east-1"
+github_repo = "owner/aws-real-time-subtitles"
+# create_oidc_provider = false  # uncomment if GitHub OIDC provider already exists in this account

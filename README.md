@@ -1,90 +1,163 @@
-# Transcribe, translate and summarize live streams in your browser with AWS AI and Generative AI services
+# AWS Real-Time Subtitles
 
-## Overview
+Real-time speech-to-text and translation for live events. Speaker talks into their mic, translated subtitles appear fullscreen on their screen, and the audience reads them via screen share.
 
-This is a real time transcription and translation Chrome extension. It will transcribe your live stream and provide a translation in the desired language. After the live stream is over, it will provide a summary of the key points.
+Fork this repo, run the bootstrap once, trigger a GitHub Actions workflow, and you have your own deployment in your AWS account.
 
-It is built on AWS Cloud and it is based on the following services:
-- Amazon Transcribe to transcribe the meeting/video, including automatic detection of the audio language;
-- Amazon Translate to translate the meeting/video to the desired language;
-- Amazon Bedrock to summarize the transcription of the meeting/video and store it on Amazon S3.
+## Architecture
 
-The whole sample uses services and resources in your AWS account.
+![Architecture diagram](docs/architecture.png)
 
-### Example
+### How it works
 
-See an example of how the extension works in the video below.
+**Organizer creates a room:**
+1. Opens `/admin` from an allowed IP. WAF blocks everyone else.
+2. Submits the form, which hits `POST /api/sign-room`. WAF checks the IP again, CloudFront proxies to Lambda via OAC (SigV4). The Lambda URL is never exposed in the browser bundle.
+3. Lambda signs a token: `base64url(payload) + "." + base64url(HMAC-SHA256(payload, SIGNING_SECRET))`
+4. AdminView builds the speaker URL and shows a copy button.
 
-<img src="/assets/chrome_extension.gif"/>
+**Speaker presents:**
+1. Opens the signed URL. CloudFront Function validates the HMAC and 8h expiry at the edge.
+2. Clicks Start mic. Browser calls `getUserMedia({ audio: true })`.
+3. Cognito Identity Pool issues temporary IAM credentials scoped to Transcribe and Translate only.
+4. Browser opens a WebSocket audio stream to Amazon Transcribe Streaming.
+5. Transcribe returns partial and final transcripts. Final phrases go to Amazon Translate.
+6. Translated text appears fullscreen. Audience watches via screen share, no separate URL or login.
 
-### Architecture
-This is the architecture of the AWS services used to build the browser extension:
-![Architecture](/assets/architecture.png)
+## Cost
 
-## Installation
+All costs are pay-as-you-go. WAF is the only fixed charge.
 
-1. Clone this repository.
-2. Deploy the backend through AWS CDK, following the instructions on [cdk/README.md](cdk/README.md).
-3. **Important**: if you followed the automated step described in [cdk/README.md](cdk/README.md) executing the postdeploy script to configure the variables, you don't need to copy/paste the values manually (just check that the values have been populated). Otherwise, populate the [src/config.js](src/config.js) with AWS CloudFormation outputs.
-```js
-const config = {
-    "aws_project_region": "{aws_region}",
-    "bedrock_region": "{bedrock_region}",
-    "APIGatewayId": "{APIGatewayId}",
-    "BucketS3Name": "{BucketS3Name}",
-    "CognitoIdentityPoolId": "{CognitoIdentityPoolId}",
-    "CognitoUserPoolClientId": "{CognitoUserPoolClientId}",
-    "CognitoUserPoolId": "{CognitoUserPoolId}"
-};
-```
+**Fixed (always running): ~$6/month**
+- WAF WebACL: $5/month
+- WAF rule: $1/month
+- S3 + CloudFront static requests: < $0.01/month
 
-4. Install dependencies and build the package:
+**Per active speaker: ~$2.40/hour**
+- Transcribe Streaming: $0.024/min
+- Translate: ~$0.95/hr (approx. 63k chars at 150 wpm)
+
+| Example | Cost |
+|---------|------|
+| 1 speaker, 1 hour | ~$2.41 |
+| 1 speaker, full day (8h) | ~$19.28 |
+| 5 speakers, 2 hours each | ~$24.08 |
+| 10 speakers, 4 hours each | ~$96.32 |
+
+Idle cost between events is ~$0.008/hour (WAF only). Run the `destroy` workflow when not in use to bring it to $0.
+
+Both services have AWS Free Tier quotas that may cover small events in the first year.
+
+## Prerequisites
+
+- AWS account with admin access (bootstrap only)
+- GitHub repository (forked from this one)
+- AWS CloudShell or a local Terraform install
+
+## Deployment
+
+### Step 1: Bootstrap (once per account)
+
+Run from AWS CloudShell or anywhere with AWS credentials and Terraform.
+
 ```bash
-cd {repo_name} # Make sure you navigate to repo root directory if you are in /cdk folder from previous steps
-npm i
-npm run build
+# Install Terraform in CloudShell (skip if already installed)
+curl -fsSL https://releases.hashicorp.com/terraform/1.9.0/terraform_1.9.0_linux_amd64.zip -o tf.zip
+unzip -o tf.zip && mv terraform ~/.local/bin/ && rm tf.zip
+
+# Clone your fork
+git clone https://github.com/<your-org>/aws-real-time-subtitles.git
+cd aws-real-time-subtitles
+
+cp terraform/bootstrap/terraform.tfvars.example terraform/bootstrap/terraform.tfvars
+# Edit: set prefix, aws_region, github_repo
+# If a GitHub OIDC provider already exists in your account: set create_oidc_provider = false
+
+cd terraform/bootstrap
+terraform init
+terraform apply
 ```
-5. Open Google Chrome browser and go to `chrome://extensions/` link. Ensure **developer mode** is enabled.
-6. Load the `build`  directory in Chrome as an **unpacked extension**.
-7. Make sure you have granted permissions to your browser to record your screen and audio. You can check it under *details* of the extension. To enable access to microphone: 
-    - Click on Extensions > Transcribe, translate and summarize live streams (powered by AWS) > Details >  Site Settings > Microphone > Allow.
 
-8. Go to [Cognito User Pools](https://us-east-1.console.aws.amazon.com/cognito/v2/idp/user-pools?region=us-west-2) and create a new user.
+The output tells you exactly what to configure in GitHub:
 
+```
+github_secrets = {
+  AWS_ACCOUNT_ID = "123456789012"
+  SIGNING_SECRET = "(generate with: openssl rand -hex 32)"
+}
+github_variables = {
+  TF_PREFIX       = "myevent"
+  AWS_REGION      = "us-east-1"
+  TF_STATE_BUCKET = "myevent-tfstate-123456789012"
+  TF_LOCK_TABLE   = "myevent-tflock"
+  AWS_ROLE_ARN    = "arn:aws:iam::123456789012:role/myevent-github-actions"
+  ADMIN_IPS       = "(your public IP + /32)"
+}
+```
 
-### Extension configuration
-See a walkthrough of the browser configuration steps (5-7) in the video below.
+### Step 2: Configure GitHub
 
-<img src="/assets/extension_settings.gif"/>
+In your forked repository:
 
+**Secrets** (`Settings > Secrets > Actions`):
+| Secret | Value |
+|--------|-------|
+| `AWS_ACCOUNT_ID` | from bootstrap output |
+| `SIGNING_SECRET` | `openssl rand -hex 32`, keep it private |
 
-## Running this extension
+**Variables** (`Settings > Variables > Actions`):
+| Variable | Value |
+|----------|-------|
+| `TF_PREFIX` | from bootstrap output |
+| `AWS_REGION` | from bootstrap output |
+| `TF_STATE_BUCKET` | from bootstrap output |
+| `TF_LOCK_TABLE` | from bootstrap output |
+| `AWS_ROLE_ARN` | from bootstrap output |
+| `ADMIN_IPS` | your IP in CIDR format, e.g. `1.2.3.4/32`. Check with `curl -s https://checkip.amazonaws.com` |
+| `ALERT_EMAIL` | (optional) email for a cost alert at $20/month |
 
-1. Click the extension's action icon to start recording. :exclamation: *The icon must be clicked when you are on the same page you want to record from!* :exclamation: 
-2. Open the sidepanel and choose the **Transcribe, translate and summarize live streams (powered by AWS)** panel.
-3. Use the Settings panel to update the settings of the application:
-    - **mic in use toggle**: 'mic not in use' is used to record only the audio of the browser tab for a live video streaming, while 'mic in use' is used for a real-time meeting where your michrophone is recorded as well
-    - **Transcription language**: language of the live stream to be recorded (set to 'auto' to allow automatic identification of the language)
-    - **Translation language**: language in which the live stream will be translated and the summary will be printed. Once you've chosen the translation language and started the recording, you cannot change your choice for the ognoing live stream. In order to change translation language for transcript and summary, you will have to record it from scratch.
-4. Click the `Start recording` button again to start recording.
-5. Click the `Stop recording` button again to stop recording.
+### Step 3: Deploy
 
-## Troubleshooting
+Go to `Actions > deploy > Run workflow`.
 
-- If the extension is not working:
-    - [**Error: Extension has not been invoked for the current page (see activeTab permission). Chrome pages cannot be captured.**] Make sure you are using it on the tab where you first opened the sidepanel. If you want to use it on a different tab, stop the extension, close the sidepanel and click on the extension icon again to run it (as "Running this extension" section).
-    - Make sure you have given permissions for audio recording in the web browser.
+When it finishes, the `app_url` Terraform output is your CloudFront URL (e.g. `https://dXXXXXXXXXXXX.cloudfront.net`). No custom domain by default.
 
-- If you can't get the summary of the live stream, make sure you have stopped the recording and then request the summary. You cannot change the language of the transcript and summary after the recording has started, so remember to choose it appropriately before you start the recording.
+## Usage
 
-## Clean up
-- To clean up the summary of the conversations in the Amazon S3 Bucket, navigate to the `Clean up` tab and click the `Clear all conversations`.
-- To clean up the backend resources, look at the instructions on [cdk/README.md](cdk/README.md).
+### Organizer
 
+1. Open `<app_url>/admin` from your configured IP.
+2. Fill in the room label, speaker language, and subtitle language.
+3. Click **Generate speaker URL**.
+4. Send the URL to the speaker.
+
+There is no database. The generated URLs only exist in the AdminView tab. If you close the tab, you lose the list, but any URLs already sent to speakers remain valid for their full 8h. Speaker sessions run entirely in the speaker's own browser and are not affected by the organizer closing the admin tab.
+
+### Speaker
+
+1. Open the signed URL in any modern browser (Chrome, Firefox, Edge).
+2. Grant microphone access when prompted.
+3. Click **Start mic**.
+4. Share your screen.
+5. Speak. Subtitles appear within about 2 seconds.
+6. Click **Stop** when done.
+
+Speaker URLs are valid for 8 hours from when the organizer generated them.
+
+## Teardown
+
+```
+Actions > destroy > Run workflow
+```
+
+This empties the S3 app bucket and runs `terraform destroy`.
+
+> The state bucket and DynamoDB lock table created by bootstrap have `prevent_destroy = true` and are not removed by the destroy workflow. Delete them manually if you no longer need them.
+
+## Updating your IP
+
+Change `ADMIN_IPS` in GitHub Variables and re-run the `deploy` workflow. Terraform updates the WAF IP set.
 
 ## License
-This repo is licensed under the [MIT-0 license](/LICENSE).
 
-
-## Contributors
-This project is developed and maintaned by Chiara Relandini ([GitHub](https://github.com/chiararelandini), [Linkedin](https://www.linkedin.com/in/chiara-relandini/)), Arian Rezai Tabrizi ([GitHub](https://github.com/arianrezai), [Linkedin](https://www.linkedin.com/in/arianrezai/)) and Luca Guida ([GitHub](https://github.com/l-guida), [Linkedin](https://www.linkedin.com/in/lucaguida/)).
+MIT. See [LICENSE](LICENSE).
