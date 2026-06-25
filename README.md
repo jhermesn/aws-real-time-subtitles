@@ -12,7 +12,7 @@ Fork this repo, run the bootstrap once, trigger a GitHub Actions workflow, and y
 
 **Organizer creates a room:**
 1. Opens `/admin` from an allowed IP. WAF blocks everyone else.
-2. Submits the form, which hits `POST /api/sign-room`. WAF checks the IP again, CloudFront proxies to Lambda via OAC (SigV4). The Lambda URL is never exposed in the browser bundle.
+2. Submits the form, which hits `POST /api/sign-room`. WAF checks the IP again, CloudFront proxies to Lambda and injects a shared secret header (`X-CF-Secret`). Lambda validates the header before processing; the Lambda URL is never exposed in the browser bundle.
 3. Lambda signs a token: `base64url(payload) + "." + base64url(HMAC-SHA256(payload, SIGNING_SECRET))`
 4. AdminView builds the speaker URL and shows a copy button.
 
@@ -104,6 +104,7 @@ In your forked repository:
 |--------|-------|
 | `AWS_ACCOUNT_ID` | from bootstrap output |
 | `SIGNING_SECRET` | `openssl rand -hex 32`, keep it private |
+| `CLOUDFRONT_ORIGIN_SECRET` | `openssl rand -base64 32`, keeps Lambda URL inaccessible without going through CloudFront |
 
 **Variables** (`Settings > Variables > Actions`):
 | Variable | Value |
@@ -113,7 +114,8 @@ In your forked repository:
 | `TF_STATE_BUCKET` | from bootstrap output |
 | `TF_LOCK_TABLE` | from bootstrap output |
 | `AWS_ROLE_ARN` | from bootstrap output |
-| `ADMIN_IPS` | your IP in CIDR format, e.g. `1.2.3.4/32`. Check with `curl -s https://checkip.amazonaws.com` |
+| `ADMIN_IPS` | comma-separated IPv4 CIDRs, e.g. `1.2.3.4/32`. Check with `curl -4 -s https://checkip.amazonaws.com` |
+| `ADMIN_IPS_V6` | (optional) comma-separated IPv6 CIDRs if your browser connects via IPv6. Check with `curl -6 -s https://checkip.amazonaws.com` |
 | `ALERT_EMAIL` | (optional) email for a cost alert at $20/month |
 
 ### Step 3: Deploy
