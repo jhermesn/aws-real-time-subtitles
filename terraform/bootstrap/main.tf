@@ -263,18 +263,9 @@ resource "aws_iam_role_policy" "github_actions" {
         Resource = "arn:aws:iam::${local.account_id}:role/${var.prefix}-*"
       },
       {
-        Sid    = "LambdaPrefixed"
-        Effect = "Allow"
-        Action = [
-          "lambda:CreateFunction", "lambda:DeleteFunction", "lambda:UpdateFunctionCode",
-          "lambda:UpdateFunctionConfiguration", "lambda:GetFunction", "lambda:GetFunctionConfiguration",
-          "lambda:AddPermission", "lambda:RemovePermission", "lambda:GetPolicy",
-          "lambda:CreateFunctionUrlConfig", "lambda:UpdateFunctionUrlConfig",
-          "lambda:DeleteFunctionUrlConfig", "lambda:GetFunctionUrlConfig",
-          "lambda:PublishVersion", "lambda:ListVersionsByFunction",
-          "lambda:TagResource", "lambda:UntagResource", "lambda:ListTags",
-          "lambda:GetFunctionCodeSigningConfig",
-        ]
+        Sid      = "LambdaPrefixed"
+        Effect   = "Allow"
+        Action   = "lambda:*"
         Resource = "arn:aws:lambda:${var.aws_region}:${local.account_id}:function:${var.prefix}-*"
       },
       {
