@@ -22,3 +22,14 @@ resource "aws_lambda_function_url" "sign_room" {
   function_name      = module.sign_room.lambda_function_name
   authorization_type = "NONE"
 }
+
+# AuthType NONE still requires an explicit resource-based policy allowing
+# public invocation. The function itself validates X-CF-Secret header to
+# reject requests that do not originate from CloudFront.
+resource "aws_lambda_permission" "public_url" {
+  statement_id           = "AllowPublicFunctionUrl"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = module.sign_room.lambda_function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
+}
