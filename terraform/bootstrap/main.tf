@@ -252,7 +252,19 @@ resource "aws_iam_role_policy" "github_actions" {
         Resource = "arn:aws:iam::${local.account_id}:role/${var.prefix}-*"
       },
       {
-        Sid      = "IAMPassRoleToServices"
+        Sid      = "IAMPassRoleToLambda"
+        Effect   = "Allow"
+        Action   = "iam:PassRole"
+        Resource = "arn:aws:iam::${local.account_id}:role/${var.prefix}-*"
+        Condition = {
+          StringEquals = { "iam:PassedToService" = "lambda.amazonaws.com" }
+        }
+      },
+      {
+        # cognito-identity:SetIdentityPoolRoles does not populate iam:PassedToService,
+        # so a StringEquals condition evaluates false and blocks the call.
+        # Resource scope to ${prefix}-* is the enforced boundary here.
+        Sid      = "IAMPassRoleToCognito"
         Effect   = "Allow"
         Action   = "iam:PassRole"
         Resource = "arn:aws:iam::${local.account_id}:role/${var.prefix}-*"
