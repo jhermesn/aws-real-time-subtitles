@@ -330,7 +330,8 @@ resource "aws_iam_role_policy" "github_actions" {
         Action = [
           "logs:CreateLogGroup", "logs:DeleteLogGroup",
           "logs:PutRetentionPolicy",
-          "logs:TagResource", "logs:UntagResource", "logs:ListTagsLogGroup",
+          "logs:TagResource", "logs:UntagResource",
+          "logs:ListTagsLogGroup", "logs:ListTagsForResource",
         ]
         Resource = "arn:aws:logs:${var.aws_region}:${local.account_id}:log-group:/aws/lambda/${var.prefix}-*"
       },
