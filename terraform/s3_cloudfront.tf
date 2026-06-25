@@ -31,7 +31,9 @@ resource "aws_cloudfront_function" "speaker_auth" {
   runtime = "cloudfront-js-2.0"
   publish = true
   code    = templatefile("${path.module}/cloudfront-functions/speaker-auth.js.tpl", {
-    signing_secret = var.signing_secret
+    signing_secret  = var.signing_secret
+    admin_ips       = var.admin_ips
+    admin_ips_v6    = var.admin_ips_v6
   })
 }
 
