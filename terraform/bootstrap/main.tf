@@ -273,6 +273,7 @@ resource "aws_iam_role_policy" "github_actions" {
           "lambda:DeleteFunctionUrlConfig", "lambda:GetFunctionUrlConfig",
           "lambda:PublishVersion", "lambda:ListVersionsByFunction",
           "lambda:TagResource", "lambda:UntagResource", "lambda:ListTags",
+          "lambda:GetFunctionCodeSigningConfig",
         ]
         Resource = "arn:aws:lambda:${var.aws_region}:${local.account_id}:function:${var.prefix}-*"
       },
