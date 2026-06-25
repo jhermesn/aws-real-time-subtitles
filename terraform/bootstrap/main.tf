@@ -17,10 +17,10 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 
 locals {
-  account_id    = data.aws_caller_identity.current.account_id
-  state_bucket  = "${var.prefix}-tfstate-${local.account_id}"
-  lock_table    = "${var.prefix}-tflock"
-  role_name     = "${var.prefix}-github-actions"
+  account_id   = data.aws_caller_identity.current.account_id
+  state_bucket = "${var.prefix}-tfstate-${local.account_id}"
+  lock_table   = "${var.prefix}-tflock"
+  role_name    = "${var.prefix}-github-actions"
   oidc_provider_arn = (
     var.create_oidc_provider
     ? aws_iam_openid_connect_provider.github[0].arn
@@ -123,7 +123,7 @@ resource "aws_s3_bucket_policy" "tfstate_logs" {
         Action    = "s3:PutObject"
         Resource  = "${aws_s3_bucket.tfstate_logs.arn}/tfstate/*"
         Condition = {
-          ArnLike     = { "aws:SourceArn" = aws_s3_bucket.tfstate.arn }
+          ArnLike      = { "aws:SourceArn" = aws_s3_bucket.tfstate.arn }
           StringEquals = { "aws:SourceAccount" = local.account_id }
         }
       },
@@ -214,10 +214,10 @@ resource "aws_iam_role_policy" "github_actions" {
     Version = "2012-10-17"
     Statement = [
       {
-        # s3:* scoped to the two specific known bucket ARNs — not a wildcard on all buckets
-        Sid      = "S3Buckets"
-        Effect   = "Allow"
-        Action   = "s3:*"
+        # s3:* scoped to the two specific known bucket ARNs, not a wildcard on all buckets
+        Sid    = "S3Buckets"
+        Effect = "Allow"
+        Action = "s3:*"
         Resource = [
           "arn:aws:s3:::${local.state_bucket}",
           "arn:aws:s3:::${local.state_bucket}/*",
@@ -341,18 +341,25 @@ resource "aws_iam_role_policy" "github_actions" {
         Action = [
           "logs:CreateLogGroup", "logs:DeleteLogGroup",
           "logs:PutRetentionPolicy",
-          "logs:PutResourcePolicy", "logs:DeleteResourcePolicy",
-          "logs:TagResource",
+          "logs:TagResource", "logs:ListTagsForResource",
         ]
-        Resource = "arn:aws:logs:us-east-1:${local.account_id}:log-group:aws-waf-logs-${var.prefix}:*"
+        # Both the log-group ARN (no suffix) and log-stream wildcard (`:*`) are needed:
+        # the provider calls ListTagsForResource/CreateLogGroup on the log-group ARN itself,
+        # while delivery.logs uses the log-stream scope.
+        Resource = [
+          "arn:aws:logs:us-east-1:${local.account_id}:log-group:aws-waf-logs-${var.prefix}",
+          "arn:aws:logs:us-east-1:${local.account_id}:log-group:aws-waf-logs-${var.prefix}:*",
+        ]
       },
       {
-        # List/describe APIs evaluate against log-group::log-stream: (no specific name) — must use *
+        # PutResourcePolicy/DeleteResourcePolicy are account-level (no resource-level support).
+        # List/describe APIs also require *.
         Sid    = "CloudWatchLogsDescribe"
         Effect = "Allow"
         Action = [
           "logs:DescribeLogGroups",
           "logs:DescribeResourcePolicies",
+          "logs:PutResourcePolicy", "logs:DeleteResourcePolicy",
         ]
         Resource = "*"
       },

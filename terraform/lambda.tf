@@ -14,6 +14,12 @@ module "sign_room" {
 
   create_role = false
   lambda_role = aws_iam_role.lambda_exec.arn
+
+}
+
+resource "aws_cloudwatch_log_group" "sign_room" {
+  name              = "/aws/lambda/${module.sign_room.lambda_function_name}"
+  retention_in_days = 30
 }
 
 resource "aws_lambda_function_url" "sign_room" {
