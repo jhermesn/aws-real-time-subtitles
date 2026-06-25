@@ -1,4 +1,4 @@
-import { TranscribeStreamingClient, StartStreamTranscriptionCommand } from "@aws-sdk/client-transcribe-streaming";
+import { TranscribeStreamingClient, StartStreamTranscriptionCommand, LanguageCode } from "@aws-sdk/client-transcribe-streaming";
 import { fromCognitoIdentityPool } from "@aws-sdk/credential-provider-cognito-identity";
 import mic from "microphone-stream";
 import appConfig from '../config';
@@ -76,7 +76,7 @@ export const startStreamingTranscription = async ({
   const command = new StartStreamTranscriptionCommand({
     ...(identifyLanguage === true
       ? { IdentifyLanguage: true, LanguageOptions: identifyLanguagesOptions.join() }
-      : { LanguageCode: language }),
+      : { LanguageCode: language as LanguageCode }),
     MediaEncoding: "pcm",
     MediaSampleRateHertz: 44100,
     AudioStream: getAudioStream(),
