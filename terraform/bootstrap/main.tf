@@ -352,14 +352,18 @@ resource "aws_iam_role_policy" "github_actions" {
         ]
       },
       {
-        # PutResourcePolicy/DeleteResourcePolicy are account-level (no resource-level support).
-        # List/describe APIs also require *.
-        Sid    = "CloudWatchLogsDescribe"
+        # PutResourcePolicy/DeleteResourcePolicy, log delivery, and list/describe APIs
+        # have no resource-level support so must use *.
+        # logs:CreateLogDelivery is required by WAFv2 PutLoggingConfiguration internally.
+        Sid    = "CloudWatchLogsWildcard"
         Effect = "Allow"
         Action = [
           "logs:DescribeLogGroups",
           "logs:DescribeResourcePolicies",
           "logs:PutResourcePolicy", "logs:DeleteResourcePolicy",
+          "logs:CreateLogDelivery", "logs:GetLogDelivery",
+          "logs:UpdateLogDelivery", "logs:DeleteLogDelivery",
+          "logs:ListLogDeliveries",
         ]
         Resource = "*"
       },
