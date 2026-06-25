@@ -68,7 +68,7 @@ module "cloudfront" {
       domain_name = local.lambda_url_host
       # CloudFront overrides any viewer-sent X-CF-Secret with this value,
       # so it cannot be forged by callers who know the Lambda URL directly.
-      custom_headers = [
+      custom_header = [
         { name = "X-CF-Secret", value = var.cloudfront_origin_secret }
       ]
       custom_origin_config = {
