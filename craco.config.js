@@ -21,6 +21,7 @@ module.exports = {
         http: require.resolve('stream-http'),
         assert: require.resolve('assert/'),
         util: require.resolve('util/'),
+        url: require.resolve('url/'),
         buffer: require.resolve('buffer/'),
         process: require.resolve('process/browser'),
         child_process: false,
