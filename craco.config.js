@@ -39,6 +39,13 @@ module.exports = {
         })
       );
 
+      // @cloudscape-design/components package.json sideEffects uses '*.css'
+      // which micromatch resolves as root-only (no **), so webpack tree-shakes
+      // imports of button/styles.scoped.css etc. Rule.sideEffects is evaluated
+      // after the tree-shaking pass and doesn't rescue already-eliminated
+      // imports. Disabling the optimization ensures all CSS side effects run.
+      webpackConfig.optimization.sideEffects = false;
+
       return webpackConfig;
     },
   },

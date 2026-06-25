@@ -54,8 +54,9 @@ amplifytools.xcconfig
 **.sample
 #amplify-do-not-edit-end
 
-# Terraform output injected at build time
+# Terraform output injected at build time — both files are auto-generated
 src/config.json
+src/config.ts
 
 # Terraform
 terraform/.terraform/
