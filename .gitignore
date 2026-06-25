@@ -5,7 +5,6 @@
 /.pnp
 .pnp.js
 .vscode
-package-lock.json
 amplify
 
 # testing
