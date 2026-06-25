@@ -9,7 +9,8 @@ module "sign_room" {
   source_path   = "${path.module}/lambda/sign-room"
 
   environment_variables = {
-    SIGNING_SECRET = var.signing_secret
+    SIGNING_SECRET   = var.signing_secret
+    CF_ORIGIN_SECRET = var.cloudfront_origin_secret
   }
 
   create_role                       = false

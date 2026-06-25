@@ -1,8 +1,21 @@
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHmac, timingSafeEqual, randomUUID } from 'node:crypto';
 
 const SIGNING_SECRET = process.env.SIGNING_SECRET;
+const CF_ORIGIN_SECRET = process.env.CF_ORIGIN_SECRET;
 
 export async function handler(event) {
+  // Reject requests that did not come through CloudFront (missing or wrong shared secret).
+  // CloudFront overrides any viewer-supplied X-CF-Secret with the configured origin header
+  // value, so this header cannot be forged by callers who bypass CloudFront.
+  const incoming = event.headers?.['x-cf-secret'] ?? '';
+  if (
+    !CF_ORIGIN_SECRET ||
+    incoming.length !== CF_ORIGIN_SECRET.length ||
+    !timingSafeEqual(Buffer.from(incoming), Buffer.from(CF_ORIGIN_SECRET))
+  ) {
+    return { statusCode: 403, body: JSON.stringify({ error: 'Forbidden' }) };
+  }
+
   let body;
   try {
     body = JSON.parse(event.body ?? '{}');

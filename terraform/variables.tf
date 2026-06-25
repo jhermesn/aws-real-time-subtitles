@@ -51,3 +51,14 @@ variable "signing_secret" {
     error_message = "signing_secret must be at least 32 characters"
   }
 }
+
+variable "cloudfront_origin_secret" {
+  description = "Shared secret CloudFront injects as X-CF-Secret header; Lambda rejects requests without it. Set via TF_VAR_cloudfront_origin_secret, never commit."
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = length(var.cloudfront_origin_secret) >= 32
+    error_message = "cloudfront_origin_secret must be at least 32 characters"
+  }
+}
