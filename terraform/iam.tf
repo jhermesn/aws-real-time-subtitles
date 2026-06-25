@@ -30,8 +30,11 @@ resource "aws_iam_role_policy" "cognito_unauth" {
     Statement = [
       {
         Effect   = "Allow"
-        Action   = "transcribe:StartStreamTranscription"
-        Resource = "*" # transcribe:StartStreamTranscription does not support resource-level restrictions
+        Action   = [
+          "transcribe:StartStreamTranscription",
+          "transcribe:StartStreamTranscriptionWebSocket",
+        ]
+        Resource = "*" # Transcribe streaming actions do not support resource-level restrictions
       },
       {
         Effect   = "Allow"
