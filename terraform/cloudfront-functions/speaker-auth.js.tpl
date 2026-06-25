@@ -8,6 +8,19 @@ function toStdBase64(s) {
   return r;
 }
 
+// crypto.timingSafeEqual is not available in CloudFront Functions JS 2.0.
+// HMAC comparison is itself timing-safe because the expected value is secret
+// and derived from the same key, so early-exit string comparison leaks nothing
+// about the secret key — only about whether the token was self-consistent.
+function safeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  var diff = 0;
+  for (var i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
 function handler(event) {
   var request = event.request;
 
@@ -33,8 +46,7 @@ function handler(event) {
       .update(payloadB64)
       .digest('base64url');
 
-    if (sigB64.length !== expected.length ||
-        !crypto.timingSafeEqual(Buffer.from(sigB64), Buffer.from(expected))) {
+    if (!safeEqual(sigB64, expected)) {
       return { statusCode: 403, statusDescription: "Forbidden" };
     }
 
