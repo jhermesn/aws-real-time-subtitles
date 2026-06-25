@@ -222,6 +222,7 @@ resource "aws_iam_role_policy" "github_actions" {
           "s3:GetBucketVersioning", "s3:PutBucketVersioning",
           "s3:GetEncryptionConfiguration", "s3:PutEncryptionConfiguration",
           "s3:GetBucketPublicAccessBlock", "s3:PutBucketPublicAccessBlock",
+          "s3:GetBucketTagging", "s3:PutBucketTagging",
           "s3:CreateBucket", "s3:DeleteBucket",
         ]
         Resource = [
@@ -255,14 +256,6 @@ resource "aws_iam_role_policy" "github_actions" {
         Effect   = "Allow"
         Action   = "iam:PassRole"
         Resource = "arn:aws:iam::${local.account_id}:role/${var.prefix}-*"
-        Condition = {
-          StringEquals = {
-            "iam:PassedToService" = [
-              "lambda.amazonaws.com",
-              "cognito-identity.amazonaws.com",
-            ]
-          }
-        }
       },
       {
         Sid    = "LambdaPrefixed"
@@ -332,6 +325,7 @@ resource "aws_iam_role_policy" "github_actions" {
         Action = [
           "logs:CreateLogGroup", "logs:DeleteLogGroup",
           "logs:PutRetentionPolicy", "logs:DescribeLogGroups",
+          "logs:TagResource", "logs:UntagResource", "logs:ListTagsLogGroup",
         ]
         Resource = "arn:aws:logs:${var.aws_region}:${local.account_id}:log-group:/aws/lambda/${var.prefix}-*"
       },
@@ -344,7 +338,7 @@ resource "aws_iam_role_policy" "github_actions" {
           "logs:PutResourcePolicy", "logs:DeleteResourcePolicy",
           "logs:DescribeResourcePolicies",
         ]
-        Resource = "arn:aws:logs:us-east-1:${local.account_id}:log-group:aws-waf-logs-${var.prefix}"
+        Resource = "arn:aws:logs:us-east-1:${local.account_id}:log-group:aws-waf-logs-${var.prefix}:*"
       },
       {
         Sid    = "Budgets"
