@@ -36,9 +36,8 @@ resource "aws_lambda_permission" "public_url" {
 }
 
 resource "aws_lambda_permission" "public_invoke" {
-  statement_id           = "AllowPublicInvoke"
-  action                 = "lambda:InvokeFunction"
-  function_name          = module.sign_room.lambda_function_name
-  principal              = "*"
-  function_url_auth_type = "NONE"
+  statement_id  = "AllowPublicInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = module.sign_room.lambda_function_name
+  principal     = "*"
 }
