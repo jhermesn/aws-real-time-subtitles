@@ -60,14 +60,19 @@ export const startStreamingTranscription = async ({
   activeMicStream = new mic();
   const { language, identifyLanguage } = options;
 
+  // Read actual AudioContext sample rate before setStream triggers audio processing.
+  // Browsers (especially macOS Chrome) often use 48000 Hz, not 44100 Hz.
+  const sampleRate: number = activeMicStream.context.sampleRate;
+
   activeMicStream.setStream(mediaStream);
 
   if (!clientConfig) throw new Error('clientConfig not initialised, call createConfig first');
   const transcribeClient = new TranscribeStreamingClient(clientConfig);
 
+  const maxChunkBytes = sampleRate * 4;
   const getAudioStream = async function* () {
     for await (const chunk of activeMicStream as AsyncIterable<Buffer>) {
-      if (chunk.length <= 44100) {
+      if (chunk.length <= maxChunkBytes) {
         yield { AudioEvent: { AudioChunk: encodePCMChunk(chunk) } };
       }
     }
@@ -78,7 +83,7 @@ export const startStreamingTranscription = async ({
       ? { IdentifyLanguage: true, LanguageOptions: identifyLanguagesOptions.join() }
       : { LanguageCode: language as LanguageCode }),
     MediaEncoding: "pcm",
-    MediaSampleRateHertz: 44100,
+    MediaSampleRateHertz: sampleRate,
     AudioStream: getAudioStream(),
     ShowSpeakerLabel: true,
   });

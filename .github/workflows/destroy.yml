@@ -63,4 +63,5 @@ jobs:
           TF_VAR_aws_region: ${{ vars.AWS_REGION }}
           TF_VAR_github_repo: ${{ github.repository }}
           TF_VAR_signing_secret: ${{ secrets.SIGNING_SECRET }}
+          TF_VAR_cloudfront_origin_secret: ${{ secrets.CLOUDFRONT_ORIGIN_SECRET }}
         run: terraform destroy -auto-approve
