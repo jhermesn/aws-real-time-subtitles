@@ -20,13 +20,19 @@ variable "github_repo" {
 }
 
 variable "admin_ips" {
-  description = "CIDR blocks allowed to access /admin and /api (organizer public IPs)"
+  description = "IPv4 CIDR blocks allowed to access /admin and /api (organizer public IPs)"
   type        = list(string)
 
   validation {
     condition     = length(var.admin_ips) > 0
     error_message = "admin_ips must contain at least one CIDR"
   }
+}
+
+variable "admin_ips_v6" {
+  description = "IPv6 CIDR blocks allowed to access /admin and /api (optional, for dual-stack connections)"
+  type        = list(string)
+  default     = []
 }
 
 variable "alert_email" {

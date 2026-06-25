@@ -9,6 +9,18 @@ resource "aws_wafv2_ip_set" "admin" {
   tags = { prefix = var.prefix }
 }
 
+resource "aws_wafv2_ip_set" "admin_v6" {
+  provider = aws.us_east_1
+  count    = length(var.admin_ips_v6) > 0 ? 1 : 0
+
+  name               = "${var.prefix}-admin-ips-v6"
+  scope              = "CLOUDFRONT"
+  ip_address_version = "IPV6"
+  addresses          = var.admin_ips_v6
+
+  tags = { prefix = var.prefix }
+}
+
 resource "aws_wafv2_web_acl" "main" {
   provider = aws.us_east_1
 
@@ -85,8 +97,20 @@ resource "aws_wafv2_web_acl" "main" {
         statement {
           not_statement {
             statement {
-              ip_set_reference_statement {
-                arn = aws_wafv2_ip_set.admin.arn
+              or_statement {
+                statement {
+                  ip_set_reference_statement {
+                    arn = aws_wafv2_ip_set.admin.arn
+                  }
+                }
+                dynamic "statement" {
+                  for_each = length(var.admin_ips_v6) > 0 ? [1] : []
+                  content {
+                    ip_set_reference_statement {
+                      arn = aws_wafv2_ip_set.admin_v6[0].arn
+                    }
+                  }
+                }
               }
             }
           }

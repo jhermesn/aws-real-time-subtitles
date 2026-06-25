@@ -37,15 +37,12 @@ jobs:
       - name: Convert ADMIN_IPS to Terraform list
         env:
           ADMIN_IPS_RAW: ${{ vars.ADMIN_IPS }}
+          ADMIN_IPS_V6_RAW: ${{ vars.ADMIN_IPS_V6 }}
         run: |
-          # Convert "1.2.3.4/32,5.6.7.8/32" → JSON array for Terraform
-          TF_ADMIN_IPS=$(echo "$ADMIN_IPS_RAW" | python3 -c "
-          import sys, json
-          raw = sys.stdin.read().strip()
-          ips = [ip.strip() for ip in raw.split(',') if ip.strip()]
-          print(json.dumps(ips))
-          ")
-          echo "TF_VAR_admin_ips=$TF_ADMIN_IPS" >> "$GITHUB_ENV"
+          # "1.2.3.4/32,5.6.7.8/32" -> '["1.2.3.4/32","5.6.7.8/32"]'
+          csv_to_json() { echo "$1" | python3 -c 'import sys,json; r=sys.stdin.read().strip(); print(json.dumps([x.strip() for x in r.split(",") if x.strip()]))'; }
+          echo "TF_VAR_admin_ips=$(csv_to_json "$ADMIN_IPS_RAW")" >> "$GITHUB_ENV"
+          echo "TF_VAR_admin_ips_v6=$(csv_to_json "$ADMIN_IPS_V6_RAW")" >> "$GITHUB_ENV"
 
       - name: Terraform apply
         working-directory: terraform
