@@ -57,12 +57,6 @@ module "cloudfront" {
       signing_behavior = "always"
       signing_protocol = "sigv4"
     }
-    lambda_oac = {
-      description      = "${var.prefix} Lambda OAC"
-      origin_type      = "lambda"
-      signing_behavior = "always"
-      signing_protocol = "sigv4"
-    }
   }
 
   origin = {
@@ -78,7 +72,6 @@ module "cloudfront" {
         origin_protocol_policy = "https-only"
         origin_ssl_protocols   = ["TLSv1.2"]
       }
-      origin_access_control = "lambda_oac"
     }
   }
 
