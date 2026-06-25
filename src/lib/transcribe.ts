@@ -1,5 +1,5 @@
 import { TranscribeStreamingClient, StartStreamTranscriptionCommand } from "@aws-sdk/client-transcribe-streaming";
-import { fromCognitoIdentityPool } from "@aws-sdk/credential-providers";
+import { fromCognitoIdentityPool } from "@aws-sdk/credential-provider-cognito-identity";
 import mic from "microphone-stream";
 import appConfig from '../config';
 import { Buffer } from 'buffer';

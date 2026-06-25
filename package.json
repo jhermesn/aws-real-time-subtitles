@@ -5,7 +5,7 @@
   "dependencies": {
     "@aws-sdk/client-transcribe-streaming": "^3.629.0",
     "@aws-sdk/client-translate": "^3.629.0",
-    "@aws-sdk/credential-providers": "^3.630.0",
+    "@aws-sdk/credential-provider-cognito-identity": "^3.630.0",
     "@cloudscape-design/components": "3.0.640",
     "@cloudscape-design/global-styles": "^1.0.0",
     "@testing-library/jest-dom": "6.4.5",
