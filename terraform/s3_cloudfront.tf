@@ -49,6 +49,7 @@ module "cloudfront" {
 
   web_acl_id = aws_wafv2_web_acl.main.arn
 
+  create_origin_access_control = true
   origin_access_control = {
     s3_oac = {
       description      = "${var.prefix} S3 OAC"
