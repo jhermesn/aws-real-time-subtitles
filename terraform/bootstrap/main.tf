@@ -329,7 +329,7 @@ resource "aws_iam_role_policy" "github_actions" {
         Effect = "Allow"
         Action = [
           "logs:CreateLogGroup", "logs:DeleteLogGroup",
-          "logs:PutRetentionPolicy", "logs:DescribeLogGroups",
+          "logs:PutRetentionPolicy",
           "logs:TagResource", "logs:UntagResource", "logs:ListTagsLogGroup",
         ]
         Resource = "arn:aws:logs:${var.aws_region}:${local.account_id}:log-group:/aws/lambda/${var.prefix}-*"
@@ -339,11 +339,21 @@ resource "aws_iam_role_policy" "github_actions" {
         Effect = "Allow"
         Action = [
           "logs:CreateLogGroup", "logs:DeleteLogGroup",
-          "logs:PutRetentionPolicy", "logs:DescribeLogGroups",
+          "logs:PutRetentionPolicy",
           "logs:PutResourcePolicy", "logs:DeleteResourcePolicy",
-          "logs:DescribeResourcePolicies",
+          "logs:TagResource",
         ]
         Resource = "arn:aws:logs:us-east-1:${local.account_id}:log-group:aws-waf-logs-${var.prefix}:*"
+      },
+      {
+        # List/describe APIs evaluate against log-group::log-stream: (no specific name) — must use *
+        Sid    = "CloudWatchLogsDescribe"
+        Effect = "Allow"
+        Action = [
+          "logs:DescribeLogGroups",
+          "logs:DescribeResourcePolicies",
+        ]
+        Resource = "*"
       },
       {
         Sid    = "Budgets"
