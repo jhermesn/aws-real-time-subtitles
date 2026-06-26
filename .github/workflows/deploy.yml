@@ -94,7 +94,7 @@ jobs:
       - name: Smoke test
         run: |
           APP_URL=$(cd terraform && terraform output -raw app_url)
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${APP_URL}/")
-          [ "${STATUS}" = "200" ] || { echo "/ returned ${STATUS}, expected 200"; exit 1; }
+          # / and /admin are now blocked by CF Function for non-admin IPs (including the CI runner).
+          # Only verify the distribution is up by checking /speaker (no token) returns 403.
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${APP_URL}/speaker")
           [ "${STATUS}" = "403" ] || { echo "/speaker without token returned ${STATUS}, expected 403"; exit 1; }
