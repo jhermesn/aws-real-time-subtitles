@@ -9,17 +9,26 @@ type SubtitleState = {
   partial: string;
 };
 
+const MicIcon = () => (
+  <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V20H9v2h6v-2h-2v-2.08A7 7 0 0 0 19 11h-2z"/>
+  </svg>
+);
+
+const StopIcon = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+    <rect x="5" y="5" width="14" height="14" rx="2"/>
+  </svg>
+);
+
 export default function SpeakerView() {
   const [params] = useSearchParams();
   const src = params.get('src') ?? 'en-US';
   const tgt = params.get('tgt') ?? 'pt';
-  const room = params.get('room') ?? '';
 
   const [active, setActive] = useState(false);
   const [subtitles, setSubtitles] = useState<SubtitleState>({ final: '', partial: '' });
   const [error, setError] = useState<string | null>(null);
-  const [panelOpen, setPanelOpen] = useState(false);
-  const [rawTranscription, setRawTranscription] = useState<string[]>([]);
 
   const recorderRef = useRef<MediaRecorder | undefined>(undefined);
   const pendingRef = useRef<{
@@ -31,7 +40,6 @@ export default function SpeakerView() {
   const handleStart = useCallback(async () => {
     setError(null);
     setSubtitles({ final: '', partial: '' });
-    setRawTranscription([]);
     pendingRef.current = { text: '', lang: undefined, timer: null };
 
     let mediaStream: MediaStream;
@@ -70,21 +78,17 @@ export default function SpeakerView() {
       createTranslateClient(config);
 
       let previousSpeaker: string | undefined;
-      let transcriptionLines: string[] = [];
 
       await startStreamingTranscription({
         mediaStream,
         options: { language: src, identifyLanguage: src === 'auto' },
-        callback: (transcript, isFinal, speaker, identifiedLanguage) => {
+        callback: (transcript, isFinal, speaker, identifiedLanguage) => { // NOSONAR - boolean flag is idiomatic for streaming partial/final events
           if (isFinal) {
             const newSpeaker = previousSpeaker === undefined || speaker !== previousSpeaker;
-            if (newSpeaker) {
-              transcriptionLines.push(transcript);
-              previousSpeaker = speaker;
-            } else {
-              transcriptionLines[transcriptionLines.length - 1] += transcript;
+            if (!newSpeaker) {
+              // same speaker — transcript is cumulative, handled by pending flush
             }
-            setRawTranscription([...transcriptionLines]);
+            previousSpeaker = speaker;
             setSubtitles((prev: SubtitleState) => ({ ...prev, partial: '' }));
 
             const effectiveLang = identifiedLanguage ?? src;
@@ -121,17 +125,16 @@ export default function SpeakerView() {
 
   return (
     <div className={styles.root}>
-      <span className={styles.watermark}>aws · subtitles</span>
+      {subtitles.final && (
+        <div key={subtitles.final} className={styles.finalText}>{subtitles.final}</div>
+      )}
 
-      <div className={styles.overlay}>
-        {subtitles.final && (
-          <div key={subtitles.final} className={styles.finalText}>{subtitles.final}</div>
-        )}
+      <div className={styles.bottomArea}>
         {subtitles.partial && (
           <div className={styles.partialText}>{subtitles.partial}</div>
         )}
-        {(showIdleHint) && (
-          <div className={styles.idleHint}>Press Start mic to begin</div>
+        {showIdleHint && (
+          <div className={styles.idleHint}>Tap mic to begin</div>
         )}
         {error && (
           <div className={styles.errorText}>{error}</div>
@@ -139,29 +142,16 @@ export default function SpeakerView() {
       </div>
 
       <div className={styles.controls}>
-        {!active ? (
-          <button className={styles.btn} onClick={handleStart}>▶ Start mic</button>
+        {active ? (
+          <button className={`${styles.btn} ${styles.btnStop}`} onClick={handleStop} aria-label="Stop">
+            <StopIcon />
+          </button>
         ) : (
-          <button className={`${styles.btn} ${styles.btnStop}`} onClick={handleStop}>■ Stop</button>
+          <button className={styles.btn} onClick={handleStart} aria-label="Start mic">
+            <MicIcon />
+          </button>
         )}
-        <button className={styles.btnPanel} onClick={() => setPanelOpen(o => !o)}>
-          {panelOpen ? '✕ Close' : '☰ Info'}
-        </button>
       </div>
-
-      {panelOpen && (
-        <div className={styles.panel}>
-          <div className={styles.panelRow}><b>Room:</b> {room || '-'}</div>
-          <div className={styles.panelRow}><b>Lang:</b> {src} → {tgt}</div>
-          <div className={styles.panelDivider} />
-          <div className={styles.panelLabel}>Raw transcription</div>
-          <div className={styles.panelScroll}>
-            {rawTranscription.map((line, i) => (
-              <div key={`${i}-${line.slice(0, 12)}`} className={styles.panelLine}>{line}</div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

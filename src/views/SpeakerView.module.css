@@ -10,30 +10,22 @@
   user-select: none;
 }
 
-.overlay {
-  flex: 1;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 0 5vw 2vh;
-  gap: 12px;
-  pointer-events: none;
-}
-
 @keyframes subtitleIn {
   from {
     opacity: 0;
-    transform: translateY(14px);
+    transform: translate(-50%, calc(-50% + 14px));
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translate(-50%, -50%);
   }
 }
 
 .finalText {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   color: #ffffff;
   font-size: clamp(2.8rem, 7vw, 5rem);
   font-weight: 700;
@@ -45,7 +37,18 @@
   padding: 0.2em 0.6em;
   border-radius: 10px;
   backdrop-filter: blur(4px);
+  pointer-events: none;
   animation: subtitleIn 0.28s ease-out forwards;
+}
+
+.bottomArea {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 5vw 2vh;
+  gap: 12px;
+  pointer-events: none;
 }
 
 .partialText {
@@ -86,12 +89,13 @@
   background: #ff9900;
   color: #0d1b2a;
   border: none;
-  border-radius: 8px;
-  padding: 11px 28px;
-  font-size: 1rem;
-  font-weight: 700;
+  border-radius: 50%;
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  letter-spacing: 0.02em;
   transition: background 0.15s, transform 0.1s;
 }
 
@@ -112,81 +116,4 @@
 .btnStop:hover {
   background: #e8431f;
   transform: translateY(-1px);
-}
-
-.btnPanel {
-  background: rgba(255, 153, 0, 0.08);
-  color: rgba(255, 255, 255, 0.75);
-  border: 1px solid rgba(255, 153, 0, 0.25);
-  border-radius: 8px;
-  padding: 11px 18px;
-  font-size: 0.9rem;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-
-.btnPanel:hover {
-  background: rgba(255, 153, 0, 0.16);
-  border-color: rgba(255, 153, 0, 0.5);
-}
-
-.panel {
-  position: fixed;
-  top: 14px;
-  right: 14px;
-  width: 300px;
-  max-height: 50vh;
-  background: rgba(13, 27, 42, 0.97);
-  border: 1px solid rgba(255, 153, 0, 0.2);
-  border-radius: 12px;
-  padding: 16px;
-  color: #ccc;
-  font-size: 0.82rem;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  z-index: 20;
-  backdrop-filter: blur(12px);
-}
-
-.panelRow {
-  color: #eee;
-  margin-bottom: 2px;
-}
-
-.panelDivider {
-  border-top: 1px solid rgba(255, 153, 0, 0.15);
-  margin: 8px 0;
-}
-
-.panelLabel {
-  color: #ff9900;
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-weight: 600;
-}
-
-.panelScroll {
-  overflow-y: auto;
-  flex: 1;
-}
-
-.panelLine {
-  margin-bottom: 4px;
-  line-height: 1.4;
-  color: rgba(255, 255, 255, 0.65);
-}
-
-.watermark {
-  position: fixed;
-  top: 14px;
-  left: 18px;
-  color: rgba(255, 153, 0, 0.25);
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  pointer-events: none;
-  z-index: 10;
 }
