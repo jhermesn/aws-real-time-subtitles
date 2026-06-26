@@ -41,7 +41,18 @@ jobs:
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           BUCKET="${TF_PREFIX}-app-${ACCOUNT_ID}"
           if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
-            aws s3 rm "s3://${BUCKET}" --recursive
+            # Must delete all versions and delete markers before Terraform can remove the bucket.
+            # aws s3 rm --recursive only creates delete markers on versioned buckets.
+            aws s3api list-object-versions --bucket "$BUCKET" \
+              --output text --query 'Versions[*].[Key,VersionId]' \
+              | while IFS=$'\t' read -r key ver; do
+                  aws s3api delete-object --bucket "$BUCKET" --key "$key" --version-id "$ver"
+                done
+            aws s3api list-object-versions --bucket "$BUCKET" \
+              --output text --query 'DeleteMarkers[*].[Key,VersionId]' \
+              | while IFS=$'\t' read -r key ver; do
+                  aws s3api delete-object --bucket "$BUCKET" --key "$key" --version-id "$ver"
+                done
           fi
 
       - name: Convert ADMIN_IPS to Terraform list
