@@ -1,9 +1,13 @@
 terraform {
-  required_version = ">= 1.5"
+  required_version = ">= 1.10"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.28"
+    }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
     }
   }
   # Local backend, state lives in terraform/bootstrap/terraform.tfstate
@@ -19,11 +23,10 @@ data "aws_caller_identity" "current" {}
 locals {
   account_id   = data.aws_caller_identity.current.account_id
   state_bucket = "${var.prefix}-tfstate-${local.account_id}"
-  lock_table   = "${var.prefix}-tflock"
   role_name    = "${var.prefix}-github-actions"
   oidc_provider_arn = (
     var.create_oidc_provider
-    ? aws_iam_openid_connect_provider.github[0].arn
+    ? module.github_oidc.arn
     : "arn:aws:iam::${local.account_id}:oidc-provider/token.actions.githubusercontent.com"
   )
 }
@@ -150,65 +153,60 @@ resource "aws_s3_bucket_logging" "tfstate" {
   target_prefix = "tfstate/"
 }
 
-resource "aws_dynamodb_table" "tflock" {
-  name                        = local.lock_table
-  billing_mode                = "PAY_PER_REQUEST"
-  hash_key                    = "LockID"
-  deletion_protection_enabled = true
+module "github_oidc" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-oidc-provider"
+  version = "~> 6.0"
 
-  attribute {
-    name = "LockID"
-    type = "S"
-  }
+  create = var.create_oidc_provider
 
-  # checkov:skip=CKV_AWS_119: lock table uses DynamoDB default AWS-owned encryption; CMK provides no value here
-  # checkov:skip=CKV_AWS_28: point-in-time recovery on a lock table provides no value
-  point_in_time_recovery {
-    enabled = false
-  }
+  url = "https://token.actions.githubusercontent.com"
+  # client_id_list defaults to ["sts.amazonaws.com"] when omitted, matching
+  # the previous hardcoded value. thumbprint_list is fetched live from the
+  # provider's own TLS cert instead of hardcoded, avoiding staleness when
+  # GitHub rotates its cert chain.
 
-  lifecycle {
-    prevent_destroy = true
-  }
+  tags = { Project = var.prefix, ManagedBy = "terraform" }
 }
 
-resource "aws_iam_openid_connect_provider" "github" {
-  count = var.create_oidc_provider ? 1 : 0
+module "github_actions_role" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role"
+  version = "~> 6.0"
 
-  url            = "https://token.actions.githubusercontent.com"
-  client_id_list = ["sts.amazonaws.com"]
-  thumbprint_list = [
-    "6938fd4d98bab03faadb97b34396831e3780aea1",
-    "1c58a3a8518e8759bf075b76b750d4f2df264fcd",
-  ]
+  name            = local.role_name
+  use_name_prefix = false
 
-  lifecycle {
-    prevent_destroy = true
+  trust_policy_permissions = {
+    GitHubOIDC = {
+      actions = ["sts:AssumeRoleWithWebIdentity"]
+      principals = [{
+        type        = "Federated"
+        identifiers = [local.oidc_provider_arn]
+      }]
+      condition = [
+        {
+          test     = "StringEquals"
+          variable = "token.actions.githubusercontent.com:sub"
+          values   = ["repo:${var.github_repo}:ref:refs/heads/main"]
+        },
+        {
+          test     = "StringEquals"
+          variable = "token.actions.githubusercontent.com:aud"
+          values   = ["sts.amazonaws.com"]
+        },
+      ]
+    }
   }
+
+  tags = { Project = var.prefix, ManagedBy = "terraform" }
 }
 
-resource "aws_iam_role" "github_actions" {
-  name = local.role_name
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Federated = local.oidc_provider_arn }
-      Action    = "sts:AssumeRoleWithWebIdentity"
-      Condition = {
-        StringEquals = {
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:ref:refs/heads/main"
-          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-        }
-      }
-    }]
-  })
-}
-
+# Kept as a standalone resource (not module-managed inline_policy_permissions)
+# so its name stays "deploy"; the module always names the inline policy after
+# the role, which would force a destroy/recreate of a policy that's already
+# attached to a live role for no functional benefit.
 resource "aws_iam_role_policy" "github_actions" {
   name = "deploy"
-  role = aws_iam_role.github_actions.id
+  role = module.github_actions_role.name
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -224,12 +222,6 @@ resource "aws_iam_role_policy" "github_actions" {
           "arn:aws:s3:::${var.prefix}-app-${local.account_id}",
           "arn:aws:s3:::${var.prefix}-app-${local.account_id}/*",
         ]
-      },
-      {
-        Sid      = "DynamoLock"
-        Effect   = "Allow"
-        Action   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"]
-        Resource = "arn:aws:dynamodb:${var.aws_region}:${local.account_id}:table/${local.lock_table}"
       },
       {
         Sid    = "IAMPrefixedRoles"
@@ -254,31 +246,10 @@ resource "aws_iam_role_policy" "github_actions" {
         }
       },
       {
-        # cognito-identity:SetIdentityPoolRoles does not populate iam:PassedToService,
-        # so a StringEquals condition evaluates false and blocks the call.
-        # Resource scope to ${prefix}-* is the enforced boundary here.
-        Sid      = "IAMPassRoleToCognito"
-        Effect   = "Allow"
-        Action   = "iam:PassRole"
-        Resource = "arn:aws:iam::${local.account_id}:role/${var.prefix}-*"
-      },
-      {
         Sid      = "LambdaPrefixed"
         Effect   = "Allow"
         Action   = "lambda:*"
         Resource = "arn:aws:lambda:${var.aws_region}:${local.account_id}:function:${var.prefix}-*"
-      },
-      {
-        Sid    = "CognitoIdentity"
-        Effect = "Allow"
-        Action = [
-          "cognito-identity:CreateIdentityPool", "cognito-identity:DeleteIdentityPool",
-          "cognito-identity:UpdateIdentityPool", "cognito-identity:DescribeIdentityPool",
-          "cognito-identity:SetIdentityPoolRoles", "cognito-identity:GetIdentityPoolRoles",
-          "cognito-identity:ListIdentityPools", "cognito-identity:TagResource",
-          "cognito-identity:UntagResource",
-        ]
-        Resource = "arn:aws:cognito-identity:${var.aws_region}:${local.account_id}:identitypool/*"
       },
       {
         Sid    = "CloudFront"
@@ -309,9 +280,7 @@ resource "aws_iam_role_policy" "github_actions" {
           "wafv2:CreateIPSet", "wafv2:UpdateIPSet", "wafv2:DeleteIPSet",
           "wafv2:GetIPSet", "wafv2:ListIPSets",
           "wafv2:TagResource", "wafv2:UntagResource", "wafv2:ListTagsForResource",
-          "wafv2:PutLoggingConfiguration", "wafv2:GetLoggingConfiguration",
-          "wafv2:DeleteLoggingConfiguration", "wafv2:ListResourcesForWebACL",
-          "wafv2:CheckCapacity",
+          "wafv2:ListResourcesForWebACL", "wafv2:CheckCapacity",
         ]
         # WAF create/associate actions don't support resource-level restrictions
         Resource = "*"
@@ -328,38 +297,6 @@ resource "aws_iam_role_policy" "github_actions" {
         Resource = "arn:aws:logs:${var.aws_region}:${local.account_id}:log-group:/aws/lambda/${var.prefix}-*"
       },
       {
-        Sid    = "CloudWatchLogsWAF"
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup", "logs:DeleteLogGroup",
-          "logs:PutRetentionPolicy",
-          "logs:TagResource", "logs:ListTagsForResource",
-        ]
-        # Both the log-group ARN (no suffix) and log-stream wildcard (`:*`) are needed:
-        # the provider calls ListTagsForResource/CreateLogGroup on the log-group ARN itself,
-        # while delivery.logs uses the log-stream scope.
-        Resource = [
-          "arn:aws:logs:us-east-1:${local.account_id}:log-group:aws-waf-logs-${var.prefix}",
-          "arn:aws:logs:us-east-1:${local.account_id}:log-group:aws-waf-logs-${var.prefix}:*",
-        ]
-      },
-      {
-        # PutResourcePolicy/DeleteResourcePolicy, log delivery, and list/describe APIs
-        # have no resource-level support so must use *.
-        # logs:CreateLogDelivery is required by WAFv2 PutLoggingConfiguration internally.
-        Sid    = "CloudWatchLogsWildcard"
-        Effect = "Allow"
-        Action = [
-          "logs:DescribeLogGroups",
-          "logs:DescribeResourcePolicies",
-          "logs:PutResourcePolicy", "logs:DeleteResourcePolicy",
-          "logs:CreateLogDelivery", "logs:GetLogDelivery",
-          "logs:UpdateLogDelivery", "logs:DeleteLogDelivery",
-          "logs:ListLogDeliveries",
-        ]
-        Resource = "*"
-      },
-      {
         Sid    = "Budgets"
         Effect = "Allow"
         Action = [
@@ -371,6 +308,22 @@ resource "aws_iam_role_policy" "github_actions" {
           "budgets:DescribeSubscribersForNotification",
         ]
         Resource = "arn:aws:budgets::${local.account_id}:budget/${var.prefix}-*"
+      },
+      {
+        # Cost Explorer anomaly detection actions don't support resource-level
+        # restrictions.
+        # ce:GetAnomalyMonitors looks up the account's AWS-managed default
+        # SERVICE monitor (1-per-account quota, auto-created by AWS) instead
+        # of creating a competing one.
+        Sid    = "CostAnomalyDetection"
+        Effect = "Allow"
+        Action = [
+          "ce:GetAnomalyMonitors",
+          "ce:CreateAnomalySubscription", "ce:UpdateAnomalySubscription", "ce:DeleteAnomalySubscription",
+          "ce:GetAnomalySubscriptions",
+          "ce:TagResource", "ce:UntagResource", "ce:ListTagsForResource",
+        ]
+        Resource = "*"
       },
     ]
   })

@@ -22,11 +22,10 @@ const get = (key) => (raw[key]?.value ?? raw[key] ?? '');
 
 const config = {
   aws_region: get('aws_region'),
-  cognito_identity_pool_id: get('cognito_identity_pool_id'),
 };
 
-if (!config.aws_region || !config.cognito_identity_pool_id) {
-  console.error('src/config.json is missing aws_region or cognito_identity_pool_id. terraform apply may not have run.');
+if (!config.aws_region) {
+  console.error('src/config.json is missing aws_region. terraform apply may not have run.');
   process.exit(1);
 }
 

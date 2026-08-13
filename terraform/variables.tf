@@ -52,13 +52,8 @@ variable "signing_secret" {
   }
 }
 
-variable "cloudfront_origin_secret" {
-  description = "Shared secret CloudFront injects as X-CF-Secret header; Lambda rejects requests without it. Set via TF_VAR_cloudfront_origin_secret, never commit."
-  type        = string
-  sensitive   = true
-
-  validation {
-    condition     = length(var.cloudfront_origin_secret) >= 32
-    error_message = "cloudfront_origin_secret must be at least 32 characters"
-  }
+variable "enable_waf" {
+  description = "Enable the optional WAFv2 Web ACL in front of CloudFront (AWSManagedRulesKnownBadInputsRuleSet + a redundant IP-allowlist rule already enforced for free by the speaker-auth CloudFront Function). Default false: for a static SPA plus one HMAC-gated Lambda, the edge function covers the actual attack surface at zero marginal cost. Flip to true for a regulated/compliance context that needs the paper trail of a WAF in front."
+  type        = bool
+  default     = false
 }

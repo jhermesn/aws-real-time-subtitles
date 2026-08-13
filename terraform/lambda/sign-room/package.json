@@ -1,1 +1,6 @@
-{ "type": "module" }
+{
+  "type": "module",
+  "dependencies": {
+    "@aws-sdk/client-sts": "^3.629.0"
+  }
+}

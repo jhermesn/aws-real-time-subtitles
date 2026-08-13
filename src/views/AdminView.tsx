@@ -10,11 +10,23 @@ type Room = {
   speakerUrl: string;
 };
 
+// The Lambda origin is behind CloudFront OAC, which signs every forwarded
+// request with SigV4. Lambda doesn't accept unsigned payloads on PUT/POST,
+// so the client must compute and send the body's SHA-256 hash itself.
+async function sha256Hex(body: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body));
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 async function createRoom(label: string, src: string, tgt: string): Promise<string> {
+  const body = JSON.stringify({ src, tgt, room: label });
   const res = await fetch('/api/sign-room', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ src, tgt, room: label }),
+    headers: {
+      'Content-Type': 'application/json',
+      'x-amz-content-sha256': await sha256Hex(body),
+    },
+    body,
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({})) as { error?: string };

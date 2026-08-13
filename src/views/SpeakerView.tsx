@@ -9,6 +9,10 @@ type SubtitleState = {
   partial: string;
 };
 
+const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000;
+
+const baseLang = (lang: string): string => lang.split('-')[0].toLowerCase();
+
 const MicIcon = () => (
   <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
     <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V20H9v2h6v-2h-2v-2.08A7 7 0 0 0 19 11h-2z"/>
@@ -25,22 +29,56 @@ export default function SpeakerView() {
   const [params] = useSearchParams();
   const src = params.get('src') ?? 'en-US';
   const tgt = params.get('tgt') ?? 'pt';
+  const token = params.get('token') ?? '';
 
   const [active, setActive] = useState(false);
   const [subtitles, setSubtitles] = useState<SubtitleState>({ final: '', partial: '' });
   const [error, setError] = useState<string | null>(null);
+  const [timedOut, setTimedOut] = useState(false);
 
-  const recorderRef = useRef<MediaRecorder | undefined>(undefined);
+  const mediaStreamRef = useRef<MediaStream | undefined>(undefined);
+  const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastFinalTextRef = useRef<string>('');
   const pendingRef = useRef<{
     text: string;
     lang: string | undefined;
     timer: ReturnType<typeof setTimeout> | null;
   }>({ text: '', lang: undefined, timer: null });
 
+  const handleStop = useCallback(() => {
+    stopStreamingTranscription();
+    mediaStreamRef.current?.getTracks().forEach(t => t.stop());
+    mediaStreamRef.current = undefined;
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
+    }
+    setActive(false);
+  }, []);
+
+  // Real VAD (pausing the audio generator on silence) risks the Transcribe
+  // stream closing server-side mid-utterance. A wall-clock counter since the
+  // last final result is simpler and catches the actual leak: a mic left on
+  // after the talk ends.
+  const scheduleAutoStop = useCallback(() => {
+    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+    inactivityTimerRef.current = setTimeout(() => {
+      handleStop();
+      setTimedOut(true);
+    }, INACTIVITY_TIMEOUT_MS);
+  }, [handleStop]);
+
   const handleStart = useCallback(async () => {
     setError(null);
+    setTimedOut(false);
     setSubtitles({ final: '', partial: '' });
     pendingRef.current = { text: '', lang: undefined, timer: null };
+    lastFinalTextRef.current = '';
+
+    if (!token) {
+      setError('Missing room token. Ask the organizer for a fresh speaker link.');
+      return;
+    }
 
     let mediaStream: MediaStream;
     try {
@@ -50,17 +88,26 @@ export default function SpeakerView() {
       return;
     }
 
-    const recorder = new MediaRecorder(mediaStream);
-    recorder.onstop = () => mediaStream.getTracks().forEach(t => t.stop());
-    recorder.start();
-    recorderRef.current = recorder;
+    mediaStreamRef.current = mediaStream;
     setActive(true);
+    scheduleAutoStop();
 
     const flushTranslation = (sourceLang: string) => {
       const text = pendingRef.current.text.trim();
       if (!text) return;
       pendingRef.current.text = '';
       pendingRef.current.lang = undefined;
+
+      // Transcribe occasionally re-emits the same final segment; skip the
+      // repeat rather than pay for translating it twice.
+      if (text === lastFinalTextRef.current) return;
+      lastFinalTextRef.current = text;
+
+      if (baseLang(sourceLang) === baseLang(tgt)) {
+        setSubtitles({ final: text, partial: '' });
+        return;
+      }
+
       translateText(text, sourceLang, tgt)
         .then(translated => {
           setSubtitles({ final: translated, partial: '' });
@@ -74,21 +121,15 @@ export default function SpeakerView() {
     };
 
     try {
-      const config = await createConfig();
+      const config = await createConfig(token);
       createTranslateClient(config);
-
-      let previousSpeaker: string | undefined;
 
       await startStreamingTranscription({
         mediaStream,
         options: { language: src, identifyLanguage: src === 'auto' },
-        callback: (transcript, isFinal, speaker, identifiedLanguage) => { // NOSONAR - boolean flag is idiomatic for streaming partial/final events
+        callback: (transcript, isFinal, identifiedLanguage) => { // NOSONAR - boolean flag is idiomatic for streaming partial/final events
           if (isFinal) {
-            const newSpeaker = previousSpeaker === undefined || speaker !== previousSpeaker;
-            if (!newSpeaker) {
-              // same speaker — transcript is cumulative, handled by pending flush
-            }
-            previousSpeaker = speaker;
+            scheduleAutoStop();
             setSubtitles((prev: SubtitleState) => ({ ...prev, partial: '' }));
 
             const effectiveLang = identifiedLanguage ?? src;
@@ -110,14 +151,7 @@ export default function SpeakerView() {
       if (pendingRef.current.timer) clearTimeout(pendingRef.current.timer);
       setActive(false);
     }
-  }, [src, tgt]);
-
-  const handleStop = useCallback(() => {
-    stopStreamingTranscription();
-    recorderRef.current?.stop();
-    recorderRef.current = undefined;
-    setActive(false);
-  }, []);
+  }, [src, tgt, token, scheduleAutoStop]);
 
   useEffect(() => () => handleStop(), [handleStop]);
 
@@ -134,7 +168,9 @@ export default function SpeakerView() {
           <div className={styles.partialText}>{subtitles.partial}</div>
         )}
         {showIdleHint && (
-          <div className={styles.idleHint}>Tap mic to begin</div>
+          <div className={styles.idleHint}>
+            {timedOut ? 'Stopped after 5 min of silence, tap mic to resume' : 'Tap mic to begin'}
+          </div>
         )}
         {error && (
           <div className={styles.errorText}>{error}</div>
@@ -143,11 +179,11 @@ export default function SpeakerView() {
 
       <div className={styles.controls}>
         {active ? (
-          <button className={`${styles.btn} ${styles.btnStop}`} onClick={handleStop} aria-label="Stop">
+          <button type="button" className={`${styles.btn} ${styles.btnStop}`} onClick={handleStop} aria-label="Stop">
             <StopIcon />
           </button>
         ) : (
-          <button className={styles.btn} onClick={handleStart} aria-label="Start mic">
+          <button type="button" className={styles.btn} onClick={handleStart} aria-label="Start mic">
             <MicIcon />
           </button>
         )}

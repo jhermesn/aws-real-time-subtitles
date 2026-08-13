@@ -2,4 +2,7 @@ prefix      = "myevent"
 aws_region  = "us-east-1"
 github_repo = "owner/aws-real-time-subtitles"
 admin_ips   = ["1.2.3.4/32"]   # organizer's public IP, safe to commit, not sensitive
+# admin_ips_v6 = ["2001:db8::1/128"]  # optional, only if the organizer connects over IPv6
+# alert_email  = "you@example.com"    # optional, Budget + Cost Anomaly Detection alerts
+# enable_waf   = true                 # optional, default false (edge CloudFront Function already gates IP+token)
 # signing_secret set as GitHub Secret TF_VAR_signing_secret only, never here

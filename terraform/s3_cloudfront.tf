@@ -1,5 +1,5 @@
 locals {
-  lambda_url_host = trimsuffix(trimprefix(aws_lambda_function_url.sign_room.function_url, "https://"), "/")
+  lambda_url_host = trimsuffix(trimprefix(module.sign_room.lambda_function_url, "https://"), "/")
 }
 
 module "s3_bucket" {
@@ -13,6 +13,22 @@ module "s3_bucket" {
   ignore_public_acls      = true
   restrict_public_buckets = true
 
+  attach_policy = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "cloudfront.amazonaws.com" }
+      Action    = "s3:GetObject"
+      Resource  = "arn:aws:s3:::${var.prefix}-app-${data.aws_caller_identity.current.account_id}/*"
+      Condition = {
+        StringEquals = {
+          "AWS:SourceArn" = module.cloudfront.cloudfront_distribution_arn
+        }
+      }
+    }]
+  })
+
   versioning = {
     enabled = true
   }
@@ -24,16 +40,29 @@ module "s3_bucket" {
       }
     }
   }
+
+  lifecycle_rule = [
+    {
+      id      = "expire-noncurrent-versions"
+      enabled = true
+
+      noncurrent_version_expiration = {
+        noncurrent_days = 7
+      }
+
+      abort_incomplete_multipart_upload_days = 1
+    }
+  ]
 }
 
 resource "aws_cloudfront_function" "speaker_auth" {
   name    = "${var.prefix}-speaker-auth"
   runtime = "cloudfront-js-2.0"
   publish = true
-  code    = templatefile("${path.module}/cloudfront-functions/speaker-auth.js.tpl", {
-    signing_secret  = var.signing_secret
-    admin_ips       = var.admin_ips
-    admin_ips_v6    = var.admin_ips_v6
+  code = templatefile("${path.module}/cloudfront-functions/speaker-auth.js.tpl", {
+    signing_secret = var.signing_secret
+    admin_ips      = var.admin_ips
+    admin_ips_v6   = var.admin_ips_v6
   })
 }
 
@@ -49,13 +78,19 @@ module "cloudfront" {
   retain_on_delete    = false
   wait_for_deployment = true
 
-  web_acl_id = aws_wafv2_web_acl.main.arn
+  web_acl_id = var.enable_waf ? aws_wafv2_web_acl.main[0].arn : null
 
   create_origin_access_control = true
   origin_access_control = {
     s3_oac = {
       description      = "${var.prefix} S3 OAC"
       origin_type      = "s3"
+      signing_behavior = "always"
+      signing_protocol = "sigv4"
+    }
+    lambda_oac = {
+      description      = "${var.prefix} Lambda Function URL OAC"
+      origin_type      = "lambda"
       signing_behavior = "always"
       signing_protocol = "sigv4"
     }
@@ -67,12 +102,8 @@ module "cloudfront" {
       origin_access_control = "s3_oac"
     }
     lambda = {
-      domain_name = local.lambda_url_host
-      # CloudFront overrides any viewer-sent X-CF-Secret with this value,
-      # so it cannot be forged by callers who know the Lambda URL directly.
-      custom_header = [
-        { name = "X-CF-Secret", value = var.cloudfront_origin_secret }
-      ]
+      domain_name           = local.lambda_url_host
+      origin_access_control = "lambda_oac"
       custom_origin_config = {
         http_port              = 80
         https_port             = 443
@@ -91,6 +122,11 @@ module "cloudfront" {
     use_forwarded_values   = false
     cache_policy_id        = "658327ea-f89d-4fab-a63d-7e88639e58f6" # CachingOptimized
 
+    # AWS managed SecurityHeadersPolicy: HSTS, X-Content-Type-Options,
+    # X-Frame-Options, Referrer-Policy, X-XSS-Protection. No custom policy
+    # to maintain.
+    response_headers_policy_id = "67f7725c-6f97-4210-82d7-5512b31e9d03"
+
     function_association = {
       viewer-request = {
         function_arn = aws_cloudfront_function.speaker_auth.arn
@@ -100,15 +136,22 @@ module "cloudfront" {
 
   ordered_cache_behavior = [
     {
-      path_pattern             = "/api/*"
-      target_origin_id         = "lambda"
-      viewer_protocol_policy   = "https-only"
-      allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
-      cached_methods           = ["GET", "HEAD"]
-      compress                 = false
-      use_forwarded_values     = false
-      cache_policy_id          = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad" # CachingDisabled
-      origin_request_policy_id = "b689b0a8-53d0-40ab-baf2-68738e2966ac" # AllViewerExceptHostHeader
+      path_pattern               = "/api/*"
+      target_origin_id           = "lambda"
+      viewer_protocol_policy     = "https-only"
+      allowed_methods            = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+      cached_methods             = ["GET", "HEAD"]
+      compress                   = false
+      use_forwarded_values       = false
+      cache_policy_id            = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad" # CachingDisabled
+      origin_request_policy_id   = "b689b0a8-53d0-40ab-baf2-68738e2966ac" # AllViewerExceptHostHeader
+      response_headers_policy_id = "67f7725c-6f97-4210-82d7-5512b31e9d03" # Managed-SecurityHeadersPolicy
+
+      function_association = {
+        viewer-request = {
+          function_arn = aws_cloudfront_function.speaker_auth.arn
+        }
+      }
     }
   ]
 
@@ -126,23 +169,4 @@ module "cloudfront" {
       error_caching_min_ttl = 10
     }
   ]
-}
-
-resource "aws_s3_bucket_policy" "app" {
-  bucket = module.s3_bucket.s3_bucket_id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Service = "cloudfront.amazonaws.com" }
-      Action    = "s3:GetObject"
-      Resource  = "${module.s3_bucket.s3_bucket_arn}/*"
-      Condition = {
-        StringEquals = {
-          "AWS:SourceArn" = module.cloudfront.cloudfront_distribution_arn
-        }
-      }
-    }]
-  })
 }

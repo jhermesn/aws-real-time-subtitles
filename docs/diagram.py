@@ -1,6 +1,6 @@
 from diagrams import Diagram, Cluster, Edge
 from diagrams.aws.network import CloudFront
-from diagrams.aws.security import WAF, Cognito
+from diagrams.aws.security import WAF, IAMAWSSts
 from diagrams.aws.storage import S3
 from diagrams.aws.compute import Lambda, LambdaFunction
 from diagrams.aws.ml import Transcribe, Translate
@@ -13,13 +13,16 @@ GREEN  = "#1d8348"
 
 graph_attr = {
     "fontsize": "14",
-    "pad": "2.0",
-    "splines": "curved",
+    "pad": "1.0",
+    "splines": "line",
     "nodesep": "1.2",
-    "ranksep": "2.2",
+    "ranksep": "1.8",
     "bgcolor": "white",
-    "margin": "0.8",
+    "margin": "0.6",
+    "labelloc": "t",
 }
+
+edge_attr = {"dir": "both", "arrowtail": "none"}
 
 with Diagram(
     "AWS Real-Time Subtitles",
@@ -36,42 +39,40 @@ with Diagram(
     with Cluster("AWS Cloud"):
 
         with Cluster("Edge — us-east-1"):
-            waf    = WAF("WAF v2\nIP allowlist\n/admin + /api/*")
-            cf     = CloudFront("CloudFront")
-            cf_fn  = LambdaFunction("CF Function\nspeaker-auth\n(HMAC + expiry)")
+            waf   = WAF("WAF v2\n(optional, off by default)")
+            cf    = CloudFront("CloudFront")
+            cf_fn = LambdaFunction("CF Function: speaker-auth\nIP allowlist + HMAC token")
 
         with Cluster("Origins"):
-            s3   = S3("S3\nReact App\n(OAC)")
-            sign = Lambda("Lambda\nsign-room\n(X-CF-Secret)")
+            s3   = S3("S3\nReact App (OAC)")
+            sign = Lambda("Lambda: sign-room\n(OAC-signed origin)")
 
         with Cluster("AI Services"):
-            cognito    = Cognito("Cognito\nIdentity Pool\n(unauthenticated)")
+            sts        = IAMAWSSts("STS AssumeRole\nspeaker-session role")
             transcribe = Transcribe("Transcribe\nStreaming")
-            translate  = Translate("Translate")
+            translate  = Translate("Translate\n(skipped if src == tgt)")
 
-    # --- Admin flow ---
-    organizer >> Edge(color=BLUE, label="① POST /api/sign-room") >> waf
-    waf >> Edge(color=BLUE) >> cf
-    cf >> Edge(color=BLUE, label="X-CF-Secret header") >> sign
-    sign >> Edge(color=BLUE, style="dashed", constraint="false", headlabel="② signed token") >> organizer
+    # --- Admin: create room. Arrowheads on both ends: request out, token back. ---
+    organizer >> Edge(color=GRAY, style="dashed", label="(optional) WAF layer", **edge_attr) >> waf
+    waf >> Edge(color=BLUE, label="POST /api/sign-room\n(returns signed token)", **edge_attr) >> cf
+    cf >> Edge(color=BLUE, label="OAC-signed", **edge_attr) >> sign
+    organizer >> Edge(color=GRAY, style="dashed", label="shares speaker URL") >> speaker
 
     # --- Static assets ---
-    cf >> Edge(color=GRAY, style="dashed", label="/* → S3 OAC") >> s3
+    cf >> Edge(color=GRAY, style="dashed", label="/*") >> s3
 
-    # --- Admin hands off URL ---
-    organizer >> Edge(color=GRAY, style="dashed", label="③ speaker URL") >> speaker
-
-    # --- Speaker flow ---
-    speaker >> Edge(color=ORANGE, label="④ /speaker?token=") >> waf
-    waf >> Edge(color=ORANGE) >> cf
+    # --- Speaker: page load ---
+    speaker >> Edge(color=ORANGE, label="/speaker?token=") >> cf
     cf >> Edge(color=ORANGE, label="viewer-request") >> cf_fn
-    cf_fn >> Edge(color=ORANGE, style="dashed", label="token OK → serve") >> s3
+    cf_fn >> Edge(color=ORANGE, style="dashed", label="token OK, serve SPA") >> s3
 
-    # --- Speaker AI flow ---
-    speaker >> Edge(color=GREEN, label="temp creds") >> cognito
-    speaker >> Edge(color=GREEN, label="audio stream") >> transcribe
+    # --- Speaker: credential vending (same CloudFront + Lambda origin) ---
+    speaker >> Edge(color=GREEN, label="GET /api/session\nX-Room-Token header\n(returns temp credentials)", **edge_attr) >> cf
+    sign >> Edge(color=GREEN, label="AssumeRole", **edge_attr) >> sts
+
+    # --- Speaker: streaming ---
+    speaker >> Edge(color=GREEN, label="audio stream\n(returns subtitles)", **edge_attr) >> transcribe
     transcribe >> Edge(color=GREEN, label="transcript") >> translate
-    translate >> Edge(color=GREEN, constraint="false", headlabel="⑤ subtitles") >> speaker
 
     # --- Audience ---
     speaker >> Edge(color=GRAY, style="dashed", label="screen share") >> audience

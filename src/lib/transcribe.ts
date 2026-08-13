@@ -1,5 +1,4 @@
 import { TranscribeStreamingClient, StartStreamTranscriptionCommand, LanguageCode } from "@aws-sdk/client-transcribe-streaming";
-import { fromCognitoIdentityPool } from "@aws-sdk/credential-provider-cognito-identity";
 import mic from "microphone-stream";
 import appConfig from '../config';
 import { Buffer } from 'buffer';
@@ -10,21 +9,49 @@ const identifyLanguagesOptions = ["en-US","es-US","fr-FR","it-IT","de-DE","pt-BR
 export const automaticLanguage = "auto";
 export const transcribeLanguageOptions = [automaticLanguage, ...languagesTranscribe].map(lang => ({ label: lang, value: lang }));
 
+type SessionCredentials = {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken: string;
+  expiration: Date;
+};
+
 export type ClientConfig = {
   region: string;
-  credentials: ReturnType<typeof fromCognitoIdentityPool>;
+  credentials: () => Promise<SessionCredentials>;
 };
 
 let clientConfig: ClientConfig | undefined;
 let activeMicStream: InstanceType<typeof mic> | undefined;
 
-export const createConfig = async (): Promise<ClientConfig> => {
+// Returns a credential provider function rather than a static credential.
+// The SDK v3 signing middleware memoizes providers by their expiration and
+// reinvokes this function only when the credential is near expiry, so a
+// long speaker session renews itself without any client-side timer.
+export const createConfig = async (roomToken: string): Promise<ClientConfig> => {
   clientConfig = {
     region: appConfig.aws_region,
-    credentials: fromCognitoIdentityPool({
-      clientConfig: { region: appConfig.aws_region },
-      identityPoolId: appConfig.cognito_identity_pool_id,
-    }),
+    credentials: async (): Promise<SessionCredentials> => {
+      // Not an Authorization header: the Lambda origin is OAC-signed (SigV4),
+      // and CloudFront overwrites Authorization with its own signature before
+      // the request reaches Lambda, discarding this token entirely.
+      const res = await fetch('/api/session', {
+        headers: { 'X-Room-Token': roomToken },
+      });
+      if (!res.ok) throw new Error('Failed to obtain session credentials');
+      const data = await res.json() as {
+        accessKeyId: string;
+        secretAccessKey: string;
+        sessionToken: string;
+        expiration: string;
+      };
+      return {
+        accessKeyId: data.accessKeyId,
+        secretAccessKey: data.secretAccessKey,
+        sessionToken: data.sessionToken,
+        expiration: new Date(data.expiration),
+      };
+    },
   };
   return clientConfig;
 };
@@ -44,7 +71,6 @@ const encodePCMChunk = (chunk: Buffer): Buffer => {
 export type TranscribeCallback = ( // NOSONAR - boolean flag is idiomatic for streaming partial/final events
   transcript: string,
   isFinal: boolean,
-  speaker: string | undefined,
   identifiedLanguage: string | undefined
 ) => void;
 
@@ -85,7 +111,6 @@ export const startStreamingTranscription = async ({
     MediaEncoding: "pcm",
     MediaSampleRateHertz: sampleRate,
     AudioStream: getAudioStream(),
-    ShowSpeakerLabel: true,
   });
 
   const data = await transcribeClient.send(command);
@@ -94,9 +119,8 @@ export const startStreamingTranscription = async ({
     if (results?.length) {
       const newTranscript = results[0].Alternatives?.[0]?.Transcript ?? "";
       const final = !results[0].IsPartial;
-      const speaker = results[0].Alternatives?.[0]?.Items?.[0]?.Speaker ?? undefined;
       const identifiedLang = identifyLanguage && final ? results[0].LanguageCode : undefined;
-      callback(newTranscript + " ", final, speaker, identifiedLang);
+      callback(newTranscript + " ", final, identifiedLang);
     }
   }
 };

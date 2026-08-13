@@ -11,31 +11,30 @@ Fork this repo, run the bootstrap once, trigger a GitHub Actions workflow, and y
 ### How it works
 
 **Organizer creates a room:**
-1. Opens `/admin` from an allowed IP. WAF blocks everyone else.
-2. Submits the form, which hits `POST /api/sign-room`. WAF checks the IP again, CloudFront proxies to Lambda and injects a shared secret header (`X-CF-Secret`). Lambda validates the header before processing; the Lambda URL is never exposed in the browser bundle.
+1. Opens `/admin` from an allowed IP. The CloudFront Function `speaker-auth` blocks everyone else at the edge (WAF, if enabled, duplicates this as defense in depth).
+2. Submits the form, which hits `POST /api/sign-room`. CloudFront's origin access control (OAC) SigV4-signs the request to the Lambda Function URL: there's no shared secret to configure, and the Lambda URL is never exposed in the browser bundle.
 3. Lambda signs a token: `base64url(payload) + "." + base64url(HMAC-SHA256(payload, SIGNING_SECRET))`
 4. AdminView builds the speaker URL and shows a copy button.
 
 **Speaker presents:**
 1. Opens the signed URL. CloudFront Function validates the HMAC and 8h expiry at the edge.
 2. Clicks Start mic. Browser calls `getUserMedia({ audio: true })`.
-3. Cognito Identity Pool issues temporary IAM credentials scoped to Transcribe and Translate only.
+3. Browser calls `GET /api/session` with the room token in an `X-Room-Token` header (not `Authorization`, which CloudFront's OAC overwrites with its own SigV4 signature on the way to the Lambda origin). The Lambda revalidates the token and vends short-lived STS credentials (`sts:AssumeRole`) scoped to Transcribe and Translate only: no Cognito Identity Pool, nothing valid without a live room token.
 4. Browser opens a WebSocket audio stream to Amazon Transcribe Streaming.
-5. Transcribe returns partial and final transcripts. Final phrases go to Amazon Translate.
-6. Translated text appears fullscreen. Audience watches via screen share, no separate URL or login.
+5. Transcribe returns partial and final transcripts. Final phrases go to Amazon Translate, unless source and target language already match, in which case the transcript is shown as-is.
+6. Translated text appears fullscreen. Audience watches via screen share, no separate URL or login. After 5 minutes without a final transcript, the stream auto-stops (mic-left-on protection); tap the mic to resume.
 
 ## Cost
 
-All costs are pay-as-you-go. WAF is the only fixed charge.
+All costs are pay-as-you-go. WAF is optional and off by default since the CloudFront Function already covers the IP allowlist and token checks for free.
 
-**Fixed (always running): ~$6/month**
-- WAF WebACL: $5/month
-- WAF rule: $1/month
+**Fixed (always running): ~$0/month**
 - S3 + CloudFront static requests: < $0.01/month
+- Set `enable_waf = true` for ~$6/month (WAF WebACL + managed rule) if you need it documented as a compliance control.
 
 **Per active speaker: ~$2.40/hour**
 - Transcribe Streaming: $0.024/min
-- Translate: ~$0.95/hr (approx. 63k chars at 150 wpm)
+- Translate: ~$0.95/hr (approx. 63k chars at 150 wpm); $0 if speaker and subtitle language match
 
 | Example | Cost |
 |---------|------|
@@ -44,7 +43,7 @@ All costs are pay-as-you-go. WAF is the only fixed charge.
 | 5 speakers, 2 hours each | ~$24.08 |
 | 10 speakers, 4 hours each | ~$96.32 |
 
-Idle cost between events is ~$0.008/hour (WAF only). Run the `destroy` workflow when not in use to bring it to $0.
+Idle cost between events is effectively $0 with WAF off. Run the `destroy` workflow when not in use, and set a Cost Anomaly Detection alert email (`ALERT_EMAIL`) so an unexpected spend surfaces within hours instead of waiting on the monthly Budget threshold.
 
 Both services have AWS Free Tier quotas that may cover small events in the first year.
 
@@ -62,7 +61,7 @@ Run from AWS CloudShell or anywhere with AWS credentials and Terraform.
 
 ```bash
 # Install Terraform in CloudShell (skip if already installed)
-curl -fsSL https://releases.hashicorp.com/terraform/1.9.0/terraform_1.9.0_linux_amd64.zip -o tf.zip
+curl -fsSL https://releases.hashicorp.com/terraform/1.10.5/terraform_1.10.5_linux_amd64.zip -o tf.zip
 unzip -o tf.zip && mv terraform ~/.local/bin/ && rm tf.zip
 
 # Clone your fork
@@ -89,7 +88,6 @@ github_variables = {
   TF_PREFIX       = "myevent"
   AWS_REGION      = "us-east-1"
   TF_STATE_BUCKET = "myevent-tfstate-123456789012"
-  TF_LOCK_TABLE   = "myevent-tflock"
   AWS_ROLE_ARN    = "arn:aws:iam::123456789012:role/myevent-github-actions"
   ADMIN_IPS       = "(your public IP + /32)"
 }
@@ -104,7 +102,6 @@ In your forked repository:
 |--------|-------|
 | `AWS_ACCOUNT_ID` | from bootstrap output |
 | `SIGNING_SECRET` | `openssl rand -hex 32`, keep it private |
-| `CLOUDFRONT_ORIGIN_SECRET` | `openssl rand -base64 32`, keeps Lambda URL inaccessible without going through CloudFront |
 
 **Variables** (`Settings > Variables > Actions`):
 | Variable | Value |
@@ -112,11 +109,11 @@ In your forked repository:
 | `TF_PREFIX` | from bootstrap output |
 | `AWS_REGION` | from bootstrap output |
 | `TF_STATE_BUCKET` | from bootstrap output |
-| `TF_LOCK_TABLE` | from bootstrap output |
 | `AWS_ROLE_ARN` | from bootstrap output |
 | `ADMIN_IPS` | comma-separated IPv4 CIDRs, e.g. `1.2.3.4/32`. Check with `curl -4 -s https://checkip.amazonaws.com` |
 | `ADMIN_IPS_V6` | (optional) comma-separated IPv6 CIDRs if your browser connects via IPv6. Check with `curl -6 -s https://checkip.amazonaws.com` |
-| `ALERT_EMAIL` | (optional) email for a cost alert at $20/month |
+| `ALERT_EMAIL` | (optional) email for a Budget alert at $5/month + Cost Anomaly Detection at $10 |
+| `ENABLE_WAF` | (optional) `true` to turn on the WAFv2 Web ACL, default `false` |
 
 ### Step 3: Deploy
 
@@ -142,9 +139,9 @@ There is no database. The generated URLs only exist in the AdminView tab. If you
 3. Click **Start mic**.
 4. Share your screen.
 5. Speak. Subtitles appear within about 2 seconds.
-6. Click **Stop** when done.
+6. Click **Stop** when done. If you go 5 minutes without speaking, the stream auto-stops; tap the mic to resume.
 
-Speaker URLs are valid for 8 hours from when the organizer generated them.
+Speaker URLs are valid for 8 hours from when the organizer generated them. Renewing an active mic session (a periodic credential refresh, not a page reload) reuses the same token, so it works for the full 8h window as long as the tab stays open.
 
 ## Teardown
 
@@ -154,7 +151,7 @@ Actions > destroy > Run workflow
 
 This empties the S3 app bucket and runs `terraform destroy`.
 
-> The state bucket and DynamoDB lock table created by bootstrap have `prevent_destroy = true` and are not removed by the destroy workflow. Delete them manually if you no longer need them.
+> The state bucket created by bootstrap has `prevent_destroy = true` and is not removed by the destroy workflow. Delete it manually if you no longer need it.
 
 ## Updating your IP
 

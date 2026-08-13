@@ -9,7 +9,7 @@ variable "prefix" {
 }
 
 variable "aws_region" {
-  description = "AWS region for state bucket and DynamoDB lock table"
+  description = "AWS region for the Terraform state bucket"
   type        = string
   default     = "us-east-1"
 }

@@ -12,8 +12,7 @@ output "github_variables" {
     TF_PREFIX       = var.prefix
     AWS_REGION      = var.aws_region
     TF_STATE_BUCKET = local.state_bucket
-    TF_LOCK_TABLE   = local.lock_table
-    AWS_ROLE_ARN    = aws_iam_role.github_actions.arn
+    AWS_ROLE_ARN    = module.github_actions_role.arn
     ADMIN_IPS       = "(your public IP + /32, check: curl -s https://checkip.amazonaws.com)"
   }
 }

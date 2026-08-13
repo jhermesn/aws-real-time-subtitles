@@ -2,7 +2,7 @@ var crypto = require('crypto');
 var SIGNING_SECRET = "${signing_secret}";
 
 // Admin CIDR allowlist injected by Terraform. Only /32 (IPv4) and /128 (IPv6)
-// are supported here — broader CIDRs are still enforced by WAF as a second layer.
+// are supported here; broader CIDRs are still enforced by WAF as a second layer.
 var ADMIN_CIDRS = ${jsonencode(admin_ips)}.concat(${jsonencode(admin_ips_v6)});
 
 // Normalize IPv6 groups to remove leading zeros so viewer.ip always compares
@@ -33,7 +33,7 @@ function toStdBase64(s) {
 // crypto.timingSafeEqual is not available in CloudFront Functions JS 2.0.
 // HMAC comparison is itself timing-safe because the expected value is secret
 // and derived from the same key, so early-exit string comparison leaks nothing
-// about the secret key — only about whether the token was self-consistent.
+// about the secret key, only about whether the token was self-consistent.
 function safeEqual(a, b) {
   if (a.length !== b.length) return false;
   var diff = 0;
@@ -43,33 +43,11 @@ function safeEqual(a, b) {
   return diff === 0;
 }
 
-function handler(event) {
-  var request = event.request;
-  var uri = request.uri;
-
-  // Block / and /admin* for IPs not in the allowlist. WAF also enforces /admin
-  // and /api at the HTTP layer, but cannot intercept client-side React Router
-  // navigations that start from GET /, so we enforce here at the edge too.
-  if (uri === '/' || uri.startsWith('/admin')) {
-    if (!isAdminAllowed(event.viewer.ip)) {
-      return { statusCode: 403, statusDescription: 'Forbidden' };
-    }
-    return request;
-  }
-
-  if (!uri.startsWith('/speaker')) {
-    return request;
-  }
-
-  var token = request.querystring.token && request.querystring.token.value;
-  if (!token) {
-    return { statusCode: 403, statusDescription: 'Forbidden' };
-  }
+function isValidRoomToken(token) {
+  if (!token) return false;
 
   var dotIndex = token.lastIndexOf('.');
-  if (dotIndex === -1) {
-    return { statusCode: 403, statusDescription: 'Forbidden' };
-  }
+  if (dotIndex === -1) return false;
 
   var payloadB64 = token.slice(0, dotIndex);
   var sigB64     = token.slice(dotIndex + 1);
@@ -79,17 +57,58 @@ function handler(event) {
       .update(payloadB64)
       .digest('base64url');
 
-    if (!safeEqual(sigB64, expected)) {
-      return { statusCode: 403, statusDescription: 'Forbidden' };
-    }
+    if (!safeEqual(sigB64, expected)) return false;
 
     var payload = JSON.parse(atob(toStdBase64(payloadB64)));
+    return Math.floor(Date.now() / 1000) <= payload.exp;
+  } catch (_) {
+    return false;
+  }
+}
 
-    if (Math.floor(Date.now() / 1000) > payload.exp) {
+// Not Authorization: the Lambda origin is OAC-signed (SigV4), and OAC's
+// "always" signing behavior overwrites the Authorization header with its own
+// signature before the request reaches Lambda, discarding anything the
+// client sent there. A custom header name avoids that collision entirely.
+function roomTokenHeader(request) {
+  var header = request.headers['x-room-token'];
+  return header && header.value;
+}
+
+function handler(event) {
+  var request = event.request;
+  var uri = request.uri;
+
+  // Block /, /admin*, and the rest of /api/* (everything except /api/session,
+  // which is gated by room token below) for IPs not in the allowlist. This is
+  // the sole edge gate for /api/sign-room (admin-only) when WAF is disabled.
+  // WAF's block-protected-paths rule duplicates it as defense in depth when on.
+  if (uri === '/' || uri.startsWith('/admin') || (uri.startsWith('/api') && uri !== '/api/session')) {
+    if (!isAdminAllowed(event.viewer.ip)) {
       return { statusCode: 403, statusDescription: 'Forbidden' };
     }
-  } catch (_) {
-    return { statusCode: 403, statusDescription: 'Forbidden' };
+    return request;
+  }
+
+  // /speaker (page load) carries the room token in the URL, unavoidable for a
+  // shared link. /api/session (STS credential vending, a JS fetch) carries it
+  // in an X-Room-Token header instead, so it never lands in access logs or
+  // browser history. Both are reachable by attendee IPs, not just admins; the
+  // token is the access control here. The Lambda revalidates /api/session's
+  // token independently; never trust the edge alone.
+  if (uri === '/speaker') {
+    var pageToken = request.querystring.token && request.querystring.token.value;
+    if (!isValidRoomToken(pageToken)) {
+      return { statusCode: 403, statusDescription: 'Forbidden' };
+    }
+    return request;
+  }
+
+  if (uri === '/api/session') {
+    if (!isValidRoomToken(roomTokenHeader(request))) {
+      return { statusCode: 403, statusDescription: 'Forbidden' };
+    }
+    return request;
   }
 
   return request;

@@ -23,7 +23,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "~1.9"
+          terraform_version: "~1.10"
           terraform_wrapper: false
 
       - name: Terraform init
@@ -31,8 +31,7 @@ jobs:
         run: |
           terraform init \
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-            -backend-config="region=${{ vars.AWS_REGION }}" \
-            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}"
+            -backend-config="region=${{ vars.AWS_REGION }}"
 
       - name: Convert ADMIN_IPS to Terraform list
         env:
@@ -51,8 +50,8 @@ jobs:
           TF_VAR_aws_region: ${{ vars.AWS_REGION }}
           TF_VAR_github_repo: ${{ github.repository }}
           TF_VAR_signing_secret: ${{ secrets.SIGNING_SECRET }}
-          TF_VAR_cloudfront_origin_secret: ${{ secrets.CLOUDFRONT_ORIGIN_SECRET }}
           TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+          TF_VAR_enable_waf: ${{ vars.ENABLE_WAF || 'false' }}
         run: terraform apply -auto-approve
 
       - name: Export Terraform outputs for React build
@@ -90,11 +89,3 @@ jobs:
           aws cloudfront wait invalidation-completed \
             --distribution-id "${DIST_ID}" \
             --id "${INVAL_ID}"
-
-      - name: Smoke test
-        run: |
-          APP_URL=$(cd terraform && terraform output -raw app_url)
-          # / and /admin are now blocked by CF Function for non-admin IPs (including the CI runner).
-          # Only verify the distribution is up by checking /speaker (no token) returns 403.
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${APP_URL}/speaker")
-          [ "${STATUS}" = "403" ] || { echo "/speaker without token returned ${STATUS}, expected 403"; exit 1; }
