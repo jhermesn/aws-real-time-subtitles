@@ -62,11 +62,13 @@ jobs:
             aws s3api list-object-versions --bucket "$BUCKET" \
               --output text --query 'Versions[*].[Key,VersionId]' \
               | while IFS=$'\t' read -r key ver; do
+                  [ -z "$key" ] || [ -z "$ver" ] || [ "$key" = "None" ] && continue
                   aws s3api delete-object --bucket "$BUCKET" --key "$key" --version-id "$ver"
                 done
             aws s3api list-object-versions --bucket "$BUCKET" \
               --output text --query 'DeleteMarkers[*].[Key,VersionId]' \
               | while IFS=$'\t' read -r key ver; do
+                  [ -z "$key" ] || [ -z "$ver" ] || [ "$key" = "None" ] && continue
                   aws s3api delete-object --bucket "$BUCKET" --key "$key" --version-id "$ver"
                 done
           fi
