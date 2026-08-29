@@ -9,12 +9,6 @@ on:
       aws_region:
         description: "AWS region (overrides vars.AWS_REGION)"
         required: false
-      admin_ips:
-        description: "Comma-separated IPv4 CIDRs (overrides vars.ADMIN_IPS)"
-        required: false
-      enable_waf:
-        description: "Enable WAF (true/false, overrides vars.ENABLE_WAF)"
-        required: false
 
 permissions:
   id-token: write
@@ -27,8 +21,8 @@ jobs:
     env:
       INPUT_PREFIX: ${{ inputs.prefix || vars.TF_PREFIX }}
       INPUT_AWS_REGION: ${{ inputs.aws_region || vars.AWS_REGION }}
-      INPUT_ADMIN_IPS: ${{ inputs.admin_ips || vars.ADMIN_IPS }}
-      INPUT_ENABLE_WAF: ${{ inputs.enable_waf || vars.ENABLE_WAF || 'false' }}
+      INPUT_ADMIN_IPS: ${{ vars.ADMIN_IPS }}
+      INPUT_ENABLE_WAF: ${{ vars.ENABLE_WAF || 'false' }}
 
     steps:
       - uses: actions/checkout@v4
