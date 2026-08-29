@@ -2,6 +2,19 @@ name: destroy
 
 on:
   workflow_dispatch:
+    inputs:
+      prefix:
+        description: "Resource name prefix (overrides vars.TF_PREFIX)"
+        required: false
+      aws_region:
+        description: "AWS region (overrides vars.AWS_REGION)"
+        required: false
+      admin_ips:
+        description: "Comma-separated IPv4 CIDRs (overrides vars.ADMIN_IPS)"
+        required: false
+      enable_waf:
+        description: "Enable WAF (true/false, overrides vars.ENABLE_WAF)"
+        required: false
 
 permissions:
   id-token: write
@@ -11,6 +24,12 @@ jobs:
   destroy:
     runs-on: ubuntu-latest
 
+    env:
+      INPUT_PREFIX: ${{ inputs.prefix || vars.TF_PREFIX }}
+      INPUT_AWS_REGION: ${{ inputs.aws_region || vars.AWS_REGION }}
+      INPUT_ADMIN_IPS: ${{ inputs.admin_ips || vars.ADMIN_IPS }}
+      INPUT_ENABLE_WAF: ${{ inputs.enable_waf || vars.ENABLE_WAF || 'false' }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -18,7 +37,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ env.INPUT_AWS_REGION }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -31,14 +50,12 @@ jobs:
         run: |
           terraform init \
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-            -backend-config="region=${{ vars.AWS_REGION }}"
+            -backend-config="region=${{ env.INPUT_AWS_REGION }}"
 
       - name: Empty S3 app bucket before destroy
-        env:
-          TF_PREFIX: ${{ vars.TF_PREFIX }}
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          BUCKET="${TF_PREFIX}-app-${ACCOUNT_ID}"
+          BUCKET="${INPUT_PREFIX}-app-${ACCOUNT_ID}"
           if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
             # Must delete all versions and delete markers before Terraform can remove the bucket.
             # aws s3 rm --recursive only creates delete markers on versioned buckets.
@@ -55,10 +72,8 @@ jobs:
           fi
 
       - name: Convert ADMIN_IPS to Terraform list
-        env:
-          ADMIN_IPS_RAW: ${{ vars.ADMIN_IPS }}
         run: |
-          TF_ADMIN_IPS=$(echo "$ADMIN_IPS_RAW" | python3 -c "
+          TF_ADMIN_IPS=$(echo "$INPUT_ADMIN_IPS" | python3 -c "
           import sys, json
           raw = sys.stdin.read().strip()
           ips = [ip.strip() for ip in raw.split(',') if ip.strip()]
@@ -69,9 +84,9 @@ jobs:
       - name: Terraform destroy
         working-directory: terraform
         env:
-          TF_VAR_prefix: ${{ vars.TF_PREFIX }}
-          TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+          TF_VAR_prefix: ${{ env.INPUT_PREFIX }}
+          TF_VAR_aws_region: ${{ env.INPUT_AWS_REGION }}
           TF_VAR_github_repo: ${{ github.repository }}
           TF_VAR_signing_secret: ${{ secrets.SIGNING_SECRET }}
-          TF_VAR_enable_waf: ${{ vars.ENABLE_WAF || 'false' }}
+          TF_VAR_enable_waf: ${{ env.INPUT_ENABLE_WAF }}
         run: terraform destroy -auto-approve
