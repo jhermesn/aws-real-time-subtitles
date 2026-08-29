@@ -67,22 +67,6 @@ jobs:
           echo "TF_VAR_admin_ips=$(csv_to_json "$INPUT_ADMIN_IPS")" >> "$GITHUB_ENV"
           echo "TF_VAR_admin_ips_v6=$(csv_to_json "$INPUT_ADMIN_IPS_V6")" >> "$GITHUB_ENV"
 
-      - name: Import pre-existing CloudWatch log groups
-        working-directory: terraform
-        env:
-          TF_VAR_prefix: ${{ env.INPUT_PREFIX }}
-          TF_VAR_aws_region: ${{ env.INPUT_AWS_REGION }}
-          TF_VAR_github_repo: ${{ github.repository }}
-          TF_VAR_signing_secret: ${{ secrets.SIGNING_SECRET }}
-          TF_VAR_alert_email: ${{ env.INPUT_ALERT_EMAIL }}
-          TF_VAR_enable_waf: ${{ env.INPUT_ENABLE_WAF }}
-        run: |
-          # If the Lambda log group already exists in AWS but not in state, import it
-          LOG_GROUP="/aws/lambda/${{ env.INPUT_PREFIX }}-sign-room"
-          if aws logs describe-log-groups --log-group-name-prefix "$LOG_GROUP" --query "logGroups[?logGroupName=='$LOG_GROUP'].logGroupName" --output text | grep -q .; then
-            terraform import 'module.sign_room.aws_cloudwatch_log_group.lambda[0]' "$LOG_GROUP" || true
-          fi
-
       - name: Terraform apply
         working-directory: terraform
         env:
