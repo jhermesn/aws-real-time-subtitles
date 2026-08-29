@@ -16,6 +16,7 @@ module "sign_room" {
   create_role                       = false
   lambda_role                       = module.lambda_exec_role.arn
   cloudwatch_logs_retention_in_days = 30
+  cloudwatch_logs_log_group_class   = "STANDARD"
   # No reserved_concurrent_executions: AWS requires at least 10 unreserved
   # concurrent executions per account, and small/new accounts can start with
   # an account-wide limit as low as 10 total, leaving no room to reserve any.
