@@ -290,6 +290,7 @@ resource "aws_iam_role_policy" "github_actions" {
         Effect = "Allow"
         Action = [
           "logs:CreateLogGroup", "logs:DeleteLogGroup",
+          "logs:DescribeLogGroups",
           "logs:PutRetentionPolicy",
           "logs:TagResource", "logs:UntagResource",
           "logs:ListTagsLogGroup", "logs:ListTagsForResource",
